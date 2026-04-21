@@ -1,0 +1,17 @@
+---- 새 가상환경 생성 ----
+python 3.12.9 # 버전 다운로드 (없다면)
+py -3.12 -m venv venv # 위 버전의 파이썬에 새 가상환경 생성 (if needed)
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process # 보안 정책 해제
+.\venv\Scripts\Activate.ps1 # 생성한 가상환경 활성화
+
+---- GPU 사용 (NVIDIA CUDA) ----
+# CUDA 버전에 맞는 torch wheel 설치 (예: CUDA 12.1)
+pip uninstall -y torch torchvision torchaudio
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+# 확인: python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU')"
+
+---- 가상환경 제거 (if needed) ----
+rm -Recurse -Force venv
+
+---- dependancy 다운로드 ----
+pip install -r requirements.txt
