@@ -2,61 +2,23 @@
 # - No target extraction
 # - No context extraction
 # - The whole command becomes the query
+#
+# Office phrases are delegated to ``office_command_parser`` first so phrases like
+# ``open excel`` are not swallowed by the generic ``open`` → double-click path.
 
 import re
 
-def extract_title(text):
+from speech.office_command_parser import parse_office_command
 
-    match = re.search(r"title (.+?) content", text)
-
-    if match:
-        return match.group(1)
-
-    match = re.search(r"title (.+)", text)
-
-    if match:
-        return match.group(1)
-
-    return "Title"
-
-def extract_content(text):
-
-    match = re.search(r"content (.+)", text)
-
-    if match:
-        return match.group(1)
-
-    return ""
-
-def extract_text(text):
-
-    match = re.search(r"write (.+)", text)
-
-    if match:
-        return match.group(1)
-
-    return ""
-
-def extract_excel_cell(text):
-
-    match = re.search(
-        r"cell (\d+) (\d+) (.+)",
-        text
-    )
-
-    if match:
-
-        return (
-            int(match.group(1)),
-            int(match.group(2)),
-            match.group(3)
-        )
-
-    return 1, 1, ""
 
 def parse_command(text):
 
-    text = text.lower().strip()
+    raw = text.strip()
+    text = raw.lower().strip()
+
+    office_cmd = parse_office_command(raw)
+    if office_cmd is not None:
+        return office_cmd
 
     # ---- TYPE ----
     if text.startswith("type"):
@@ -77,49 +39,6 @@ def parse_command(text):
 
     if text.startswith("scroll right"):
         return {"action": "scroll", "direction": "right", "amount": 500}
-    
-    # ---- POWERPOINT ----
-    # if ("powerpoint", "ppt") in text and "open" in text:
-    if ("powerpoint" in text or "ppt" in text) and "open" in text:
-        return {"action": "ppt_open"}
-
-    if "new presentation" in text:
-        return {"action": "ppt_new"}
-
-    if "add slide" in text:
-        return {
-            "action": "ppt_slide",
-            "title": extract_title(text),
-            "content": extract_content(text)
-        }
-
-    if "start slideshow" in text:
-        return {"action": "ppt_slideshow"}
-
-    # ---- WORD ----
-    if "word" in text and "open" in text:
-        return {"action": "word_open"}
-
-    if "write" in text and "word" in text:
-        return {
-            "action": "word_write",
-            "text": extract_text(text)
-        }
-
-    # ---- EXCEL ----
-    if "excel" in text and "open" in text:
-        return {"action": "excel_open"}
-
-    if "write cell" in text:
-
-        row, col, value = extract_excel_cell(text)
-
-        return {
-            "action": "excel_write",
-            "row": row,
-            "col": col,
-            "value": value
-        }
     
     # ---- MOUSE ACTIONS ----
     if text.startswith("right click"):
