@@ -1,49 +1,130 @@
-import win32com.client
+# com/office/ppt_controller.py
+# PowerPoint automation via COM (pywin32).
+
 import os
 
-class PowerPointController:
+import win32com.client
 
+
+class PowerPointController:
     def __init__(self):
         self.app = None
         self.presentation = None
 
-    def open(self):
+    def _connect(self):
+        if self.app is None:
+            self.app = win32com.client.Dispatch("PowerPoint.Application")
+            self.app.Visible = True
 
-        self.app = win32com.client.Dispatch("PowerPoint.Application")
-        self.app.Visible = True
-
+    def _active_presentation(self):
+        self._connect()
         if self.app.Presentations.Count == 0:
             self.presentation = self.app.Presentations.Add()
         else:
             self.presentation = self.app.ActivePresentation
+        return self.presentation
 
+    def open(self):
+        """Launch PowerPoint and ensure there is an active presentation."""
+        self._active_presentation()
         print("PowerPoint ready")
 
-    def new_presentation(self):
+    def open_file(self, path: str):
+        """Open an existing .pptx / .ppt from disk."""
+        self._connect()
+        path = os.path.abspath(os.path.expanduser(path.strip().strip('"').strip("'")))
+        self.presentation = self.app.Presentations.Open(path, WithWindow=True)
+        print("Opened presentation:", path)
 
+    def new_presentation(self):
+        self._connect()
         self.presentation = self.app.Presentations.Add()
         print("New presentation created")
 
-    def add_slide(self, title, content):
-
-        slide_layout = 1
-
-        slide = self.presentation.Slides.Add(
-            self.presentation.Slides.Count + 1,
-            slide_layout
-        )
-
+    def add_slide(self, title: str, content: str):
+        pres = self._active_presentation()
+        slide_layout = 1  # ppLayoutTitle
+        slide = pres.Slides.Add(pres.Slides.Count + 1, slide_layout)
         slide.Shapes.Title.TextFrame.TextRange.Text = title
         slide.Shapes.Placeholders(2).TextFrame.TextRange.Text = content
-
         print("Slide added")
 
-    def save(self, path):
+    def save(self, path: str | None = None):
+        pres = self._active_presentation()
+        if path:
+            p = os.path.abspath(os.path.expanduser(path.strip().strip('"').strip("'")))
+            pres.SaveAs(p)
+            print("Presentation saved:", p)
+        else:
+            pres.Save()
+            print("Presentation saved (in-place)")
 
-        self.presentation.SaveAs(path)
-        print("Presentation saved:", path)
+    def save_as(self, path: str):
+        self.save(path)
 
     def start_slideshow(self):
-
-        self.presentation.SlideShowSettings.Run()
+        pres = self._active_presentation()
+        pres.SlideShowSettings.Run()
         print("Slideshow started")
+
+    def end_slideshow(self):
+        self._connect()
+        try:
+            wnd = self.app.SlideShowWindows(1)
+            wnd.View.Exit()
+            print("Slideshow ended")
+        except Exception as e:
+            print("No active slideshow or could not exit:", e)
+            raise
+
+    def next_slide(self):
+        """Next slide in edit view, or during slideshow if running."""
+        self._connect()
+        try:
+            if self.app.SlideShowWindows.Count > 0:
+                self.app.SlideShowWindows(1).View.Next()
+            else:
+                win = self.app.ActiveWindow
+                if win.ViewType == 1:  # ppViewSlide
+                    cur = win.View.Slide.SlideIndex
+                    pres = self._active_presentation()
+                    if cur < pres.Slides.Count:
+                        win.View.GotoSlide(cur + 1)
+            print("Advanced to next slide")
+        except Exception as e:
+            print("next_slide:", e)
+            raise
+
+    def prev_slide(self):
+        self._connect()
+        try:
+            if self.app.SlideShowWindows.Count > 0:
+                self.app.SlideShowWindows(1).View.Previous()
+            else:
+                win = self.app.ActiveWindow
+                if win.ViewType == 1:
+                    cur = win.View.Slide.SlideIndex
+                    if cur > 1:
+                        win.View.GotoSlide(cur - 1)
+            print("Went to previous slide")
+        except Exception as e:
+            print("prev_slide:", e)
+            raise
+
+    def close_presentation(self):
+        """Close the active presentation without quitting PowerPoint."""
+        self._connect()
+        if self.app.Presentations.Count == 0:
+            return
+        pres = self.app.ActivePresentation
+        pres.Close()
+        self.presentation = None
+        print("Presentation closed")
+
+    def quit_app(self):
+        """Quit PowerPoint application."""
+        self._connect()
+        self.app.Quit()
+        self.app = None
+        self.presentation = None
+        print("PowerPoint quit")
