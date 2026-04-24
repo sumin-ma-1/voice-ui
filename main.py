@@ -11,6 +11,11 @@
 #
 #   To escape the running agent, press Ctrl+C
 #   To exit the agent, type "exit", "quit", "stop agent", "shutdown"
+#   To enable native on-screen UIA (pywinauto ``IsOffscreen`` + DFS prune),
+#   set environment variable ``VOICE_UI_UIA_NATIVE_ONSCREEN=1``
+#   Unset to revert to classic ``descendants`` behavior.
+#   set ``Remove-Item Env:VOICE_UI_UIA_NATIVE_ONSCREEN`` or ``$env:VOICE_UI_UIA_NATIVE_ONSCREEN = ""`` in PowerShell.
+#   See ``perception.ui_extractor`` and ``perception.uia_onscreen_extractor`` for details.
 
 import argparse
 import time

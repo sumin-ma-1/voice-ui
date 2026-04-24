@@ -69,7 +69,7 @@ def show_debug(frame):
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
 
-    folder = "test_screen_img_ocr"
+    folder = "test_screen_img"
     os.makedirs(folder, exist_ok=True)  # Create folder if it doesn't exist
 
     filename = os.path.join(folder, f"debug_view_{timestamp}.png")

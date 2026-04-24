@@ -1,32 +1,57 @@
 # perception/ui_extractor.py
+# UIA tree, vision (YOLO + local OCR on an image or live capture), and legacy ``both`` concat.
 #
-# Single-source extractors live here (UIA tree, vision on an image or live capture).
-#
-# ``main.py`` modes ``both`` / ``all`` and ``ocr`` are orchestrated there (and in
-# ``perception.ui_fallback_pipeline`` / ``perception.ocr_elements``), not via
-# ``extract_elements_by_mode``, so naming stays consistent:
-#   both = UIA then vision,  all = UIA then OCR then vision.
+# Optional native on-screen UIA (``IsOffscreen`` / property 30022 + pruned DFS):
+#   set environment variable ``VOICE_UI_UIA_NATIVE_ONSCREEN=1``
+#   → ``extract_uia_elements()`` delegates to ``perception.uia_onscreen_extractor``.
+#   Unset to restore classic ``descendants()`` behavior.
+
+import os
 
 from pywinauto import Application
 from perception.screen_capture import capture_screen
 from perception.icon_utils import detect_icons
 
 
+def _native_onscreen_uia_enabled() -> bool:
+    return os.environ.get("VOICE_UI_UIA_NATIVE_ONSCREEN", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
 def extract_uia_elements():
-    """Walk the active window UIA tree and return raw element dicts."""
+    """
+    Walk the active window UIA tree and return raw element dicts.
+
+    When ``VOICE_UI_UIA_NATIVE_ONSCREEN`` is set (see module doc), uses
+    ``uia_onscreen_extractor`` (``IsOffscreen`` + DFS prune). Otherwise uses the
+    classic ``descendants(depth=20)`` walk.
+    """
+    if _native_onscreen_uia_enabled():
+        from perception.uia_onscreen_extractor import extract_uia_elements as _native_extract
+
+        return _native_extract()
+
+    return _extract_uia_elements_classic()
+
+
+def _extract_uia_elements_classic():
+    """Classic pywinauto ``descendants`` flattening (full tree up to depth 20)."""
 
     app = Application(backend="uia").connect(active_only=True)
     window = app.top_window()
 
     elements = []
 
-    # Control types that rarely help semantic targeting; skip to reduce noise.
     EXCLUDE_TYPES = {
         "Static",
         "Groupbox",
         "ListItems",
         "ListItem",
-        "GroupBox"
+        "GroupBox",
     }
 
     for element in window.descendants(depth=20):
@@ -48,15 +73,17 @@ def extract_uia_elements():
                 parent_name = parent.window_text()
                 parent_type = parent.friendly_class_name()
 
-            elements.append({
-                "name": name,
-                "control_type": control_type,
-                "parent_name": parent_name,
-                "parent_type": parent_type,
-                "bbox": (rect.left, rect.top, rect.right, rect.bottom),
-                "center": rect.mid_point(),
-                "is_icon": False
-            })
+            elements.append(
+                {
+                    "name": name,
+                    "control_type": control_type,
+                    "parent_name": parent_name,
+                    "parent_type": parent_type,
+                    "bbox": (rect.left, rect.top, rect.right, rect.bottom),
+                    "center": rect.mid_point(),
+                    "is_icon": False,
+                }
+            )
 
         except Exception:
             continue
@@ -88,15 +115,17 @@ def extract_vision_elements_from_image(screen):
         x1, y1, x2, y2 = icon["bbox"]
         text = icon["text"]
 
-        elements.append({
-            "name": text,
-            "control_type": "icon",
-            "parent_name": "",
-            "parent_type": "",
-            "bbox": (x1, y1, x2, y2),
-            "center": ((x1 + x2) // 2, (y1 + y2) // 2),
-            "is_icon": True
-        })
+        elements.append(
+            {
+                "name": text,
+                "control_type": "icon",
+                "parent_name": "",
+                "parent_type": "",
+                "bbox": (x1, y1, x2, y2),
+                "center": ((x1 + x2) // 2, (y1 + y2) // 2),
+                "is_icon": True,
+            }
+        )
 
     return elements
 
@@ -117,8 +146,8 @@ def extract_elements_by_mode(mode: str):
 
     * ``ocr`` needs an ``easyocr.Reader`` and is implemented in
       ``perception.ocr_elements.extract_ocr_elements_from_image`` (see ``main.py``).
-    * ``both`` / ``all`` are **sequential fallbacks** (UIA?vision or UIA?OCR?vision),
-      implemented in ``main.py`` via ``perception.ui_fallback_pipeline``.
+    * ``both`` / ``all`` are **sequential fallbacks**, implemented in ``main.py``
+      via ``perception.ui_fallback_pipeline``.
 
     Args:
         mode: Exactly ``"uia"`` or ``"vision"``.
@@ -132,7 +161,19 @@ def extract_elements_by_mode(mode: str):
     if mode == "vision":
         return extract_vision_elements()
 
-    if mode in ("ocr", "both", "all"):
+    if mode == "both":
+        try:
+            uia = extract_uia_elements()
+        except Exception:
+            print("[both] UIA failed → vision only")
+            uia = []
+            vision = extract_vision_elements()
+            return uia + vision
+
+        vision = []
+        return uia + vision
+
+    if mode in ("ocr", "all"):
         raise ValueError(
             f"extract_elements_by_mode({mode!r}) is not supported. "
             f"Use main.py --mode {mode}, or perception.ocr_elements / "
@@ -140,5 +181,6 @@ def extract_elements_by_mode(mode: str):
         )
 
     raise ValueError(
-        f"Unknown mode: {mode!r}. extract_elements_by_mode only accepts 'uia' or 'vision'."
+        f"Unknown mode: {mode!r}. extract_elements_by_mode only accepts "
+        "'uia', 'vision', or legacy 'both' (concatenated lists)."
     )

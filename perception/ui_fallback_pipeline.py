@@ -32,9 +32,14 @@ def run_uia_stage() -> list[dict]:
     """
     Collect UIA-backed control elements from the foreground desktop window.
 
+    Implementation is ``perception.ui_extractor.extract_uia_elements()``:
+
+    * Default: classic ``descendants(depth=20)``.
+    * If env ``VOICE_UI_UIA_NATIVE_ONSCREEN=1``: ``perception.uia_onscreen_extractor``
+      (native ``IsOffscreen`` / UIA property 30022 + DFS subtree prune). Unset to revert.
+
     Returns:
-        Raw list from perception.ui_extractor.extract_uia_elements (may be empty
-        if the tree is sparse or pywinauto cannot attach).
+        Raw element dicts (may be empty if the tree is sparse or pywinauto cannot attach).
 
     Raises:
         May propagate pywinauto exceptions; main.py typically catches and falls back.
