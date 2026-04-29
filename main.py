@@ -36,6 +36,11 @@ from perception.ui_fallback_pipeline import (
 from perception.ocr_elements import create_easyocr_reader
 from grounding.matcher import find_best_match
 from automation.executor import execute
+from automation.action_space import (
+    DIRECT_ACTIONS,
+    POST_GROUNDING_CLICK_DELAY_ACTIONS,
+    UNKNOWN_ACTION,
+)
 
 from perception.screen_capture import capture_screen
 from perception.debug_draw import draw_elements, draw_match, show_debug
@@ -53,30 +58,6 @@ SCORE_THRESHOLD = {
     "ocr": 18,
     "vision": 15,
 }
-
-# actions that DO NOT require UI grounding
-DIRECT_ACTIONS = {
-    "type",
-    "scroll",
-    "enter",
-    "esc",
-    "tab",
-    "backspace",
-    "delete",
-    "copy",
-    "paste",
-    "cut",
-    "undo",
-    "redo",
-    "save",
-    "select_all",
-    "new_tab",
-    "close_tab",
-    "refresh",
-    "press_key",
-    "hotkey"
-}
-
 
 def main(mode):
 
@@ -122,7 +103,7 @@ def main(mode):
             print("Parsed command:", command)
 
             # ---- NO ACTION DETECTED ----
-            if action == "unknown":
+            if action == UNKNOWN_ACTION:
 
                 print("No Action detected. Please try again.")
 
@@ -381,7 +362,7 @@ def main(mode):
                 print(f"Execution time: {time.time() - start_time:.4f} sec")
 
                 # Wait for app to open after click/double click
-                if action in ("left_click", "double_click", "right_click"):
+                if action in POST_GROUNDING_CLICK_DELAY_ACTIONS:
                     time.sleep(1.5)
 
             else:

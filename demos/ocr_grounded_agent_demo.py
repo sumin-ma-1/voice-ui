@@ -38,34 +38,17 @@ from speech.command_parser import parse_command
 from perception.ui_filter import filter_elements
 from grounding.matcher import find_best_match
 from automation.executor import execute
+from automation.action_space import (
+    DIRECT_ACTIONS,
+    GROUNDED_ACTIONS,
+    POST_GROUNDING_CLICK_DELAY_ACTIONS,
+    UNKNOWN_ACTION,
+)
 from perception.screen_capture import capture_screen
 from perception.debug_draw import draw_elements, draw_match, show_debug
 
 from com.office_controller import OfficeController
 from com.office_dispatcher import OfficeDispatcher
-
-# Same idea as main.py: actions that skip UI grounding
-DIRECT_ACTIONS = {
-    "type",
-    "scroll",
-    "enter",
-    "esc",
-    "tab",
-    "backspace",
-    "delete",
-    "copy",
-    "paste",
-    "cut",
-    "undo",
-    "redo",
-    "save",
-    "select_all",
-    "new_tab",
-    "close_tab",
-    "refresh",
-    "press_key",
-    "hotkey",
-}
 
 # SentenceTransformer cosine * 100; short OCR strings often score lower than UIA names
 OCR_SCORE_THRESHOLD = 18.0
@@ -174,7 +157,7 @@ def main() -> None:
             action = command["action"]
             print("Parsed:", command)
 
-            if action == "unknown":
+            if action == UNKNOWN_ACTION:
                 print("No action detected. Try e.g. click <words on screen>.")
                 continue
 
@@ -189,7 +172,7 @@ def main() -> None:
                 print(f"Direct action done | {time.time() - start:.2f}s")
                 continue
 
-            if action not in ("left_click", "right_click", "double_click", "hover"):
+            if action not in GROUNDED_ACTIONS:
                 print(f"Action {action!r} not wired for OCR grounding in this demo.")
                 continue
 
@@ -218,7 +201,7 @@ def main() -> None:
                 if args.debug:
                     show_debug(vis)
                 execute(action, element=match, params=command)
-                if action in ("left_click", "double_click", "right_click"):
+                if action in POST_GROUNDING_CLICK_DELAY_ACTIONS:
                     time.sleep(1.0)
                 print(f"Executed {action} | {time.time() - start:.2f}s")
             else:

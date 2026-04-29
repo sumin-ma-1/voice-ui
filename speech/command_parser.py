@@ -9,6 +9,7 @@
 import re
 
 from speech.office_command_parser import parse_office_command
+from automation.action_space import UNKNOWN_ACTION
 
 
 def parse_command(text):
@@ -131,6 +132,6 @@ def parse_command(text):
 
     # default fallback
     return {
-        "action": "unknown",
-        "query": text
+        "action": UNKNOWN_ACTION,
+        "query": text,
     }
