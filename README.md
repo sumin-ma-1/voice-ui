@@ -17,7 +17,7 @@ flowchart TD
     end
 
     subgraph route [main.py branches]
-        O{Office command?}
+        O{Office action?}
         D{Direct action?}
         G[UI-grounded: click / hover / …]
     end
@@ -58,6 +58,20 @@ flowchart TD
 
 Single modes use `perception/ui_extractor.py` (`uia` / `vision`). Cascades use `perception/ui_fallback_pipeline.py` and, for OCR, `perception/ocr_elements.py`. Default: `python main.py` → `--mode uia`.
 
+### Action names (single registry)
+
+Parsed `action` strings and how they are routed are defined in **`automation/action_space.py`**:
+
+| Set | Role |
+|-----|------|
+| `OFFICE_ACTIONS` | COM path — `com/office_dispatcher.py` → `OfficeController` |
+| `DIRECT_ACTIONS` | PyAutoGUI with no UI match — straight to `automation/executor.py` |
+| `GROUNDED_ACTIONS` | Needs a matched element — perception + `matcher` → then `executor` |
+| `UNKNOWN_ACTION` | No recognized phrase — `speech/command_parser.py` fallback |
+| `POST_GROUNDING_CLICK_DELAY_ACTIONS` | After some grounded clicks, `main` / demos sleep briefly so UIs can open |
+
+`com/office_dispatcher.py` imports `OFFICE_ACTIONS` from there; `main.py` and `demos/ocr_grounded_agent_demo.py` use the same `DIRECT_ACTIONS` / grounded / post-click delay sets so lists do not drift.
+
 ---
 
 ## Run
@@ -80,11 +94,11 @@ Exit phrases: `exit`, `quit`, `stop agent`, `shutdown`. Interrupt with **Ctrl+C*
 voice-ui/
 ├── main.py
 ├── requirements.txt
-├── speech/           # TextInputGUI, command_parser (Whisper path optional, not wired in main)
+├── speech/           # TextInputGUI, command_parser, office_command_parser (Whisper optional, not wired in main)
 ├── perception/       # capture, UIA / vision extractors, ocr_elements, ui_fallback_pipeline, icon_utils, filter, debug_draw
 ├── grounding/        # matcher (SentenceTransformers + CLIP for icons)
-├── automation/       # executor (PyAutoGUI)
-├── com/              # Office dispatcher + PPT/Word/Excel controllers
+├── automation/       # action_space.py (action sets + routing helpers), executor.py (PyAutoGUI)
+├── com/              # office_dispatcher (COM branch), office_controller + office/* (PPT/Word/Excel)
 ├── demos/            # Standalone OCR / explorer demos
 └── pre/              # Prototypes — not imported by main.py
 ```
