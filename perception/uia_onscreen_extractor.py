@@ -183,6 +183,8 @@ def extract_uia_elements(
                     parent_name = parent.window_text()
                     parent_type = parent.friendly_class_name()
 
+                mp = rect.mid_point()
+                cx, cy = int(mp.x), int(mp.y)
                 elements.append(
                     {
                         "name": name,
@@ -190,7 +192,7 @@ def extract_uia_elements(
                         "parent_name": parent_name,
                         "parent_type": parent_type,
                         "bbox": (rect.left, rect.top, rect.right, rect.bottom),
-                        "center": rect.mid_point(),
+                        "center": (cx, cy),
                         "is_icon": False,
                     }
                 )

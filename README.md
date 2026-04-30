@@ -72,6 +72,8 @@ Parsed `action` strings and how they are routed are defined in **`automation/act
 
 `com/office_dispatcher.py` imports `OFFICE_ACTIONS` from there; `main.py` and `demos/ocr_grounded_agent_demo.py` use the same `DIRECT_ACTIONS` / grounded / post-click delay sets so lists do not drift.
 
+**Executor contract:** `automation/executor.execute` returns an **`ExecuteResult`** (`ok`, `reason`). On failure, `main` / demos print `reason` so users see a concrete automation or validation error. That is separate from **parse failure** (`UNKNOWN_ACTION` from `command_parser`), which uses a different message (“could not parse as a known command …”) so misparsed input is not confused with PyAutoGUI or parameter errors.
+
 ---
 
 ## Run

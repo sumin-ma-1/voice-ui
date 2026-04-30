@@ -104,9 +104,11 @@ def main(mode):
 
             # ---- NO ACTION DETECTED ----
             if action == UNKNOWN_ACTION:
-
-                print("No Action detected. Please try again.")
-
+                # Parser could not map text → known action (distinct from executor / Office failures).
+                print(
+                    "Could not parse that as a known command. "
+                    "Try examples: click Save, type hello, copy, open word, scroll down."
+                )
                 continue
 
             # ---- OFFICE COM ----
@@ -130,11 +132,13 @@ def main(mode):
 
                 print("Direct action:", action)
 
-                execute(
+                result = execute(
                     action,
                     element=None,
-                    params=command
+                    params=command,
                 )
+                if not result.ok:
+                    print(result.reason)
 
                 continue
 
@@ -352,18 +356,18 @@ def main(mode):
                 if frame is not None:
                     show_debug(frame)
 
-                execute(
+                result = execute(
                     action,
                     element=match,
-                    params=command
+                    params=command,
                 )
+                if not result.ok:
+                    print(result.reason)
+                elif action in POST_GROUNDING_CLICK_DELAY_ACTIONS:
+                    time.sleep(1.5)
 
                 # ---- END TIMER ----
                 print(f"Execution time: {time.time() - start_time:.4f} sec")
-
-                # Wait for app to open after click/double click
-                if action in POST_GROUNDING_CLICK_DELAY_ACTIONS:
-                    time.sleep(1.5)
 
             else:
 

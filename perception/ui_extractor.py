@@ -73,6 +73,9 @@ def _extract_uia_elements_classic():
                 parent_name = parent.window_text()
                 parent_type = parent.friendly_class_name()
 
+            mp = rect.mid_point()
+            # mid_point() returns a pywinauto POINT, not a tuple — use plain ints for the rest of the stack.
+            cx, cy = int(mp.x), int(mp.y)
             elements.append(
                 {
                     "name": name,
@@ -80,7 +83,7 @@ def _extract_uia_elements_classic():
                     "parent_name": parent_name,
                     "parent_type": parent_type,
                     "bbox": (rect.left, rect.top, rect.right, rect.bottom),
-                    "center": rect.mid_point(),
+                    "center": (cx, cy),
                     "is_icon": False,
                 }
             )

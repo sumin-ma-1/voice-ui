@@ -10,3 +10,6 @@ __pycache__/
 .Python
 *.so
 .pytest_cache/
+
+# test img
+test_screen_img/

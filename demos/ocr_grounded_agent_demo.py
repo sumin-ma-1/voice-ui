@@ -158,7 +158,10 @@ def main() -> None:
             print("Parsed:", command)
 
             if action == UNKNOWN_ACTION:
-                print("No action detected. Try e.g. click <words on screen>.")
+                print(
+                    "Could not parse that as a known command. "
+                    "Try: click <OCR text>, type hello, or copy."
+                )
                 continue
 
             if office_dispatcher.is_office_command(command):
@@ -168,8 +171,11 @@ def main() -> None:
                 continue
 
             if action in DIRECT_ACTIONS:
-                execute(action, element=None, params=command)
-                print(f"Direct action done | {time.time() - start:.2f}s")
+                result = execute(action, element=None, params=command)
+                if not result.ok:
+                    print(result.reason)
+                else:
+                    print(f"Direct action done | {time.time() - start:.2f}s")
                 continue
 
             if action not in GROUNDED_ACTIONS:
@@ -200,10 +206,13 @@ def main() -> None:
                 vis = draw_match(vis, match)
                 if args.debug:
                     show_debug(vis)
-                execute(action, element=match, params=command)
-                if action in POST_GROUNDING_CLICK_DELAY_ACTIONS:
-                    time.sleep(1.0)
-                print(f"Executed {action} | {time.time() - start:.2f}s")
+                result = execute(action, element=match, params=command)
+                if not result.ok:
+                    print(result.reason)
+                else:
+                    if action in POST_GROUNDING_CLICK_DELAY_ACTIONS:
+                        time.sleep(1.0)
+                    print(f"Executed {action} | {time.time() - start:.2f}s")
             else:
                 print("No confident OCR text match (lower --threshold or fix wording).")
                 if args.debug and filtered:
