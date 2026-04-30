@@ -11,11 +11,12 @@
 #
 #   To escape the running agent, press Ctrl+C
 #   To exit the agent, type "exit", "quit", "stop agent", "shutdown"
-#   To enable native on-screen UIA (pywinauto ``IsOffscreen`` + DFS prune),
-#   set environment variable ``VOICE_UI_UIA_NATIVE_ONSCREEN=1``
-#   Unset to revert to classic ``descendants`` behavior.
-#   set ``Remove-Item Env:VOICE_UI_UIA_NATIVE_ONSCREEN`` or ``$env:VOICE_UI_UIA_NATIVE_ONSCREEN = ""`` in PowerShell.
-#   See ``perception.ui_extractor`` and ``perception.uia_onscreen_extractor`` for details.
+#   UIA defaults to native on-screen extraction (``IsOffscreen`` + DFS prune); see
+#   ``perception.uia_onscreen_extractor``. To use classic ``descendants`` instead, set
+#   ``VOICE_UI_UIA_USE_CLASSIC`` to 1 / true / yes / on. Remove the variable (or any other
+#   value) to use on-screen UIA again.
+#   PowerShell classic: ``$env:VOICE_UI_UIA_USE_CLASSIC = "1"``
+#   See ``perception.ui_extractor`` for details.
 
 import argparse
 import time
@@ -26,12 +27,15 @@ from speech.command_parser import parse_command
 from perception.ui_extractor import extract_elements_by_mode
 from perception.ui_filter import filter_elements
 from perception.ui_fallback_pipeline import (
-    run_uia_stage,
     run_fullframe_ocr_stage,
-    run_vision_icon_stage,
     STAGE_UIA,
     STAGE_OCR,
     STAGE_VISION,
+)
+from perception.grounding_cascade import (
+    run_ocr_match_step,
+    run_uia_match_step,
+    run_vision_match_step,
 )
 from perception.ocr_elements import create_easyocr_reader
 from grounding.matcher import find_best_match
@@ -47,8 +51,6 @@ from perception.debug_draw import draw_elements, draw_match, show_debug
 
 from com.office_controller import OfficeController
 from com.office_dispatcher import OfficeDispatcher
-
-import cv2
 
 # ---- MODE-specific THRESHOLDS ----
 # Single modes (uia / ocr / vision) use the key matching --mode.
@@ -157,150 +159,63 @@ def main(mode):
             query = command.get("query", text)
 
             match = None
-            score = 0
+            score = 0.0
             used_mode = mode
 
             # =========================
-            # ALL MODE — UIA → full-frame OCR → vision
+            # Cascade modes: all = UIA → OCR → vision; both = UIA → vision
             # =========================
             if mode == "all":
-
-                match = None
-                score = 0.0
-                used_mode = mode
-
-                print("\n[STEP 1] Try UIA")
-
-                try:
-                    uia_elements = run_uia_stage()
-                    uia_filtered = filter_elements(uia_elements)
-
-                    print(f"[UIA] {len(uia_elements)} → {len(uia_filtered)}")
-
-                    for i, el in enumerate(uia_filtered):
-                        print(
-                            f"  [{i+1}] Name: {el['name']}, Type: {el['type']} | "
-                            f"P Name: {el['parent_name']} Type: {el['parent_type']}"
-                        )
-
-                    match, score = find_best_match(query, uia_filtered, screen=frame)
-
-                    if match and score > SCORE_THRESHOLD[STAGE_UIA]:
-                        used_mode = STAGE_UIA
-                        frame = draw_elements(frame, uia_filtered)
-                    else:
-                        if match:
-                            print("[UIA] Best candidate:", match["name"], "| score:", score)
-                        print("[UIA] No confident match → fallback to full-frame OCR")
-                        if uia_filtered:
-                            show_debug(draw_elements(frame.copy(), uia_filtered))
-                        frame = capture_screen()
-                        match = None
-
-                except Exception as e:
-                    print("[UIA] Failed:", e)
-                    match = None
-                    frame = capture_screen()
-
+                match, score, used_mode, frame = run_uia_match_step(
+                    frame,
+                    query,
+                    uia_threshold=SCORE_THRESHOLD[STAGE_UIA],
+                    heading="\n[STEP 1] Try UIA",
+                    no_match_fallback_message=(
+                        "[UIA] No confident match → fallback to full-frame OCR"
+                    ),
+                    used_mode_on_miss=mode,
+                )
                 if match is None:
-
-                    print("\n[STEP 2] Try full-frame OCR")
-
-                    ocr_elements = run_fullframe_ocr_stage(frame, ocr_reader, conf_min=0.35)
-                    ocr_filtered = filter_elements(ocr_elements)
-
-                    print(f"[OCR] {len(ocr_elements)} lines → {len(ocr_filtered)} after filter")
-
-                    match, score = find_best_match(query, ocr_filtered, screen=frame)
-
-                    if match and score > SCORE_THRESHOLD[STAGE_OCR]:
-                        used_mode = STAGE_OCR
-                        frame = draw_elements(frame, ocr_filtered)
-                    else:
-                        if match:
-                            print("[OCR] Best candidate:", match["name"], "| score:", score)
-                        print("[OCR] No confident match → fallback to vision (icons + local OCR)")
-                        match = None
-
+                    match, score, used_mode, frame = run_ocr_match_step(
+                        frame,
+                        query,
+                        ocr_reader,
+                        ocr_threshold=SCORE_THRESHOLD[STAGE_OCR],
+                        heading="\n[STEP 2] Try full-frame OCR",
+                        no_match_fallback_message=(
+                            "[OCR] No confident match → fallback to vision (icons + local OCR)"
+                        ),
+                        used_mode_on_miss=mode,
+                    )
                 if match is None:
+                    match, score, used_mode, frame = run_vision_match_step(
+                        frame,
+                        query,
+                        vision_threshold=SCORE_THRESHOLD[STAGE_VISION],
+                        heading="\n[STEP 3] Try vision (YOLO + localized OCR)",
+                        used_mode_on_miss=mode,
+                    )
 
-                    print("\n[STEP 3] Try vision (YOLO + localized OCR)")
-
-                    vision_elements = run_vision_icon_stage(frame)
-                    vision_filtered = filter_elements(vision_elements)
-
-                    print(f"[Vision] {len(vision_elements)} → {len(vision_filtered)}")
-
-                    match, score = find_best_match(query, vision_filtered, screen=frame)
-
-                    if match and score > SCORE_THRESHOLD[STAGE_VISION]:
-                        used_mode = STAGE_VISION
-                        frame = draw_elements(frame, vision_filtered)
-                    else:
-                        if match:
-                            print("[Vision] Best candidate:", match["name"], "| score:", score)
-                        match = None
-
-            # =========================
-            # BOTH MODE — UIA → vision (skip full-frame OCR)
-            # =========================
             elif mode == "both":
-
-                match = None
-                score = 0.0
-                used_mode = mode
-
-                print("\n[STEP 1] Try UIA")
-
-                try:
-                    uia_elements = run_uia_stage()
-                    uia_filtered = filter_elements(uia_elements)
-
-                    print(f"[UIA] {len(uia_elements)} → {len(uia_filtered)}")
-
-                    for i, el in enumerate(uia_filtered):
-                        print(
-                            f"  [{i+1}] Name: {el['name']}, Type: {el['type']} | "
-                            f"P Name: {el['parent_name']} Type: {el['parent_type']}"
-                        )
-
-                    match, score = find_best_match(query, uia_filtered, screen=frame)
-
-                    if match and score > SCORE_THRESHOLD[STAGE_UIA]:
-                        used_mode = STAGE_UIA
-                        frame = draw_elements(frame, uia_filtered)
-                    else:
-                        if match:
-                            print("[UIA] Best candidate:", match["name"], "| score:", score)
-                        print("[UIA] No confident match → fallback to vision (YOLO + localized OCR)")
-                        if uia_filtered:
-                            show_debug(draw_elements(frame.copy(), uia_filtered))
-                        frame = capture_screen()
-                        match = None
-
-                except Exception as e:
-                    print("[UIA] Failed:", e)
-                    match = None
-                    frame = capture_screen()
-
+                match, score, used_mode, frame = run_uia_match_step(
+                    frame,
+                    query,
+                    uia_threshold=SCORE_THRESHOLD[STAGE_UIA],
+                    heading="\n[STEP 1] Try UIA",
+                    no_match_fallback_message=(
+                        "[UIA] No confident match → fallback to vision (YOLO + localized OCR)"
+                    ),
+                    used_mode_on_miss=mode,
+                )
                 if match is None:
-
-                    print("\n[STEP 2] Try vision (YOLO + localized OCR)")
-
-                    vision_elements = run_vision_icon_stage(frame)
-                    vision_filtered = filter_elements(vision_elements)
-
-                    print(f"[Vision] {len(vision_elements)} → {len(vision_filtered)}")
-
-                    match, score = find_best_match(query, vision_filtered, screen=frame)
-
-                    if match and score > SCORE_THRESHOLD[STAGE_VISION]:
-                        used_mode = STAGE_VISION
-                        frame = draw_elements(frame, vision_filtered)
-                    else:
-                        if match:
-                            print("[Vision] Best candidate:", match["name"], "| score:", score)
-                        match = None
+                    match, score, used_mode, frame = run_vision_match_step(
+                        frame,
+                        query,
+                        vision_threshold=SCORE_THRESHOLD[STAGE_VISION],
+                        heading="\n[STEP 2] Try vision (YOLO + localized OCR)",
+                        used_mode_on_miss=mode,
+                    )
 
             # =========================
             # Single modes: uia, ocr, vision

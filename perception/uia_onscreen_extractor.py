@@ -5,9 +5,10 @@ entire subtrees when the platform reports ``True``.
 
 Why a separate module
 ----------------------
-* Easy A/B: set env ``VOICE_UI_UIA_NATIVE_ONSCREEN=1`` — ``ui_extractor.extract_uia_elements``
-  dispatches here automatically (including ``run_uia_stage`` / ``--mode uia``).
-* Easy revert: unset the env (classic ``descendants`` in ``ui_extractor``).
+* **Default path:** ``ui_extractor.extract_uia_elements`` dispatches here (including
+  ``run_uia_stage`` / ``--mode uia`` / cascades that start with UIA).
+* **Classic tree:** set ``VOICE_UI_UIA_USE_CLASSIC=1`` in the environment to use
+  ``descendants(depth=20)`` in ``ui_extractor`` instead.
 
 Behavior
 --------

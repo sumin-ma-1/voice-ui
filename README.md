@@ -50,13 +50,33 @@ flowchart TD
 
 | Mode | Source |
 |------|--------|
-| `uia` | pywinauto UIA tree on the active window |
+| `uia` | UIA on the active window — **default:** native on-screen walk (`IsOffscreen` + pruned DFS, `uia_onscreen_extractor`); optional classic `descendants` (see below) |
 | `ocr` | Full-screen EasyOCR lines → element list |
 | `vision` | YOLO icons + EasyOCR on local crops (`icon_utils`) |
 | `both` | UIA first; if no confident match, fresh capture → vision |
 | `all` | UIA → full-frame OCR → vision (three-step fallback) |
 
 Single modes use `perception/ui_extractor.py` (`uia` / `vision`). Cascades use `perception/ui_fallback_pipeline.py` and, for OCR, `perception/ocr_elements.py`. Default: `python main.py` → `--mode uia`.
+
+### UIA: on-screen (default) vs classic tree
+
+By default, UIA stages use **`perception/uia_onscreen_extractor.py`**: a depth-first walk that respects native **`IsOffscreen`** (UIA property 30022) and skips pruned subtrees, instead of flattening with `descendants(depth=20)`.
+
+To switch to the **classic** pywinauto tree (`descendants`), set:
+
+| Variable | Value | Effect |
+|----------|--------|--------|
+| `VOICE_UI_UIA_USE_CLASSIC` | `1`, `true`, `yes`, or `on` | Classic `descendants` in `ui_extractor` |
+| *(unset or any other value)* | — | On-screen native UIA (default) |
+
+PowerShell example for classic mode:
+
+```powershell
+$env:VOICE_UI_UIA_USE_CLASSIC = "1"
+python main.py --mode uia
+```
+
+Other UIA tuning (unchanged): `VOICE_UI_UIA_MAX_DEPTH` is read by `uia_onscreen_extractor`.
 
 ### Action names (single registry)
 
@@ -97,7 +117,7 @@ voice-ui/
 ├── main.py
 ├── requirements.txt
 ├── speech/           # TextInputGUI, command_parser, office_command_parser (Whisper optional, not wired in main)
-├── perception/       # capture, UIA / vision extractors, ocr_elements, ui_fallback_pipeline, icon_utils, filter, debug_draw
+├── perception/       # capture, ui_extractor (UIA default=on-screen), uia_onscreen_extractor, grounding_cascade, ocr_elements, ui_fallback_pipeline, icon_utils, filter, debug_draw
 ├── grounding/        # matcher (SentenceTransformers + CLIP for icons)
 ├── automation/       # action_space.py (action sets + routing helpers), executor.py (PyAutoGUI)
 ├── com/              # office_dispatcher (COM branch), office_controller + office/* (PPT/Word/Excel)

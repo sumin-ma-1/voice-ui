@@ -1,10 +1,11 @@
 # perception/ui_extractor.py
 # UIA tree, vision (YOLO + local OCR on an image or live capture), and legacy ``both`` concat.
 #
-# Optional native on-screen UIA (``IsOffscreen`` / property 30022 + pruned DFS):
-#   set environment variable ``VOICE_UI_UIA_NATIVE_ONSCREEN=1``
-#   → ``extract_uia_elements()`` delegates to ``perception.uia_onscreen_extractor``.
-#   Unset to restore classic ``descendants()`` behavior.
+# **Default:** native on-screen UIA (``IsOffscreen`` / property 30022 + pruned DFS) via
+# ``perception.uia_onscreen_extractor``.
+#
+# **Classic tree:** set ``VOICE_UI_UIA_USE_CLASSIC=1`` (or ``true`` / ``yes`` / ``on``) to use
+# pywinauto ``descendants(depth=20)`` instead. Unset the variable to return to on-screen UIA.
 
 import os
 
@@ -13,29 +14,28 @@ from perception.screen_capture import capture_screen
 from perception.icon_utils import detect_icons
 
 
-def _native_onscreen_uia_enabled() -> bool:
-    return os.environ.get("VOICE_UI_UIA_NATIVE_ONSCREEN", "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    )
+def _truthy_env(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _use_classic_uia_descendants() -> bool:
+    """When True, use ``_extract_uia_elements_classic`` instead of on-screen native walk."""
+    return _truthy_env("VOICE_UI_UIA_USE_CLASSIC")
 
 
 def extract_uia_elements():
     """
     Walk the active window UIA tree and return raw element dicts.
 
-    When ``VOICE_UI_UIA_NATIVE_ONSCREEN`` is set (see module doc), uses
-    ``uia_onscreen_extractor`` (``IsOffscreen`` + DFS prune). Otherwise uses the
-    classic ``descendants(depth=20)`` walk.
+    By default uses ``uia_onscreen_extractor`` (``IsOffscreen`` + DFS prune).
+    Set ``VOICE_UI_UIA_USE_CLASSIC=1`` to use the classic ``descendants(depth=20)`` walk.
     """
-    if _native_onscreen_uia_enabled():
-        from perception.uia_onscreen_extractor import extract_uia_elements as _native_extract
+    if _use_classic_uia_descendants():
+        return _extract_uia_elements_classic()
 
-        return _native_extract()
+    from perception.uia_onscreen_extractor import extract_uia_elements as _onscreen_extract
 
-    return _extract_uia_elements_classic()
+    return _onscreen_extract()
 
 
 def _extract_uia_elements_classic():
