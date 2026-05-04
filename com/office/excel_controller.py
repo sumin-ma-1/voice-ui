@@ -5,6 +5,8 @@ import os
 
 import win32com.client
 
+from com.office.foreground import bring_com_application_to_foreground
+
 
 class ExcelController:
     def __init__(self):
@@ -16,6 +18,7 @@ class ExcelController:
         if self.app is None:
             self.app = win32com.client.Dispatch("Excel.Application")
             self.app.Visible = True
+        bring_com_application_to_foreground(self.app)
 
     def _sync_active_sheet(self):
         if self.workbook is not None:
@@ -26,6 +29,7 @@ class ExcelController:
         if self.workbook is None:
             self.workbook = self.app.Workbooks.Add()
             self._sync_active_sheet()
+            bring_com_application_to_foreground(self.app)
         return self.workbook
 
     def open(self):
@@ -37,12 +41,14 @@ class ExcelController:
         path = os.path.abspath(os.path.expanduser(path.strip().strip('"').strip("'")))
         self.workbook = self.app.Workbooks.Open(path)
         self._sync_active_sheet()
+        bring_com_application_to_foreground(self.app)
         print("Opened Excel workbook:", path)
 
     def new_workbook(self):
         self._connect()
         self.workbook = self.app.Workbooks.Add()
         self._sync_active_sheet()
+        bring_com_application_to_foreground(self.app)
         print("New Excel workbook")
 
     def write_cell(self, row: int, col: int, value):

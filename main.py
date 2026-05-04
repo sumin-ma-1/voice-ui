@@ -44,13 +44,13 @@ from automation.action_space import (
     DIRECT_ACTIONS,
     POST_GROUNDING_CLICK_DELAY_ACTIONS,
     UNKNOWN_ACTION,
+    is_office_action,
 )
 
 from perception.screen_capture import capture_screen
 from perception.debug_draw import draw_elements, draw_match, show_debug
 
 from com.office_controller import OfficeController
-from com.office_dispatcher import OfficeDispatcher
 
 # ---- MODE-specific THRESHOLDS ----
 # Single modes (uia / ocr / vision) use the key matching --mode.
@@ -67,7 +67,6 @@ def main(mode):
 
     # ---- OFFICE COM ----
     office = OfficeController()
-    office_dispatcher = OfficeDispatcher()
 
     # EasyOCR is only needed for full-frame OCR (single ``ocr`` mode or ``all`` cascade).
     ocr_reader = None
@@ -115,7 +114,7 @@ def main(mode):
 
             # ---- OFFICE COM ----
 
-            if office_dispatcher.is_office_command(command):
+            if is_office_action(command.get("action", "")):
 
                 print("Office COM command detected")
 

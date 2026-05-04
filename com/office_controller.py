@@ -1,7 +1,12 @@
 # com/office_controller.py
 # Routes parsed Office actions to Word / Excel / PowerPoint COM controllers.
 
+from __future__ import annotations
+
 import traceback
+from collections.abc import Callable
+
+from automation.action_space import OFFICE_ACTIONS
 
 from com.office.ppt_controller import PowerPointController
 from com.office.word_controller import WordController
@@ -13,6 +18,83 @@ class OfficeController:
         self.ppt = PowerPointController()
         self.word = WordController()
         self.excel = ExcelController()
+        self._handlers: dict[str, Callable[[dict], None]] = self._build_handlers()
+        self._assert_handlers_match_registry()
+
+    def _assert_handlers_match_registry(self) -> None:
+        registered = frozenset(self._handlers)
+        if registered != OFFICE_ACTIONS:
+            raise RuntimeError(
+                "Office handler keys must match automation.action_space.OFFICE_ACTIONS: "
+                f"missing={sorted(OFFICE_ACTIONS - registered)!r} "
+                f"extra={sorted(registered - OFFICE_ACTIONS)!r}"
+            )
+
+    def _build_handlers(self) -> dict[str, Callable[[dict], None]]:
+        p, w, e = self.ppt, self.word, self.excel
+
+        return {
+            # --- PowerPoint ---
+            "ppt_open": lambda c: p.open(),
+            "ppt_open_file": lambda c: p.open_file(c["path"]),
+            "ppt_new": lambda c: p.new_presentation(),
+            "ppt_slide": lambda c: p.add_slide(
+                c.get("title", "Title"),
+                c.get("content", ""),
+            ),
+            "ppt_slideshow": lambda c: p.start_slideshow(),
+            "ppt_end_slideshow": lambda c: p.end_slideshow(),
+            "ppt_next_slide": lambda c: p.next_slide(),
+            "ppt_prev_slide": lambda c: p.prev_slide(),
+            "ppt_save": lambda c: p.save(c.get("path")),
+            "ppt_save_as": lambda c: p.save_as(c["path"]),
+            "ppt_close": lambda c: p.close_presentation(),
+            "ppt_quit": lambda c: p.quit_app(),
+            # --- Word ---
+            "word_open": lambda c: w.open(),
+            "word_open_file": lambda c: w.open_file(c["path"]),
+            "word_new": lambda c: w.new_document(),
+            "word_write": lambda c: w.write(c.get("text", "")),
+            "word_newline": lambda c: w.newline(),
+            "word_save": lambda c: w.save(c.get("path")),
+            "word_save_as": lambda c: w.save_as(c["path"]),
+            "word_close": lambda c: w.close_document(
+                save_changes=c.get("save_changes", False)
+            ),
+            "word_quit": lambda c: w.quit_app(save_changes=c.get("save_changes", False)),
+            "word_bold": lambda c: w.bold(),
+            "word_italic": lambda c: w.italic(),
+            "word_underline": lambda c: w.underline(),
+            "word_font_size": lambda c: w.font_size(float(c["size"])),
+            "word_page_break": lambda c: w.page_break(),
+            # --- Excel ---
+            "excel_open": lambda c: e.open(),
+            "excel_open_file": lambda c: e.open_file(c["path"]),
+            "excel_new": lambda c: e.new_workbook(),
+            "excel_write": lambda c: e.write_cell(
+                int(c["row"]),
+                int(c["col"]),
+                c.get("value", ""),
+            ),
+            "excel_select_cell": lambda c: e.select_cell(
+                int(c["row"]),
+                int(c["col"]),
+            ),
+            "excel_formula": lambda c: e.set_formula(
+                int(c["row"]),
+                int(c["col"]),
+                str(c["formula"]),
+            ),
+            "excel_next_sheet": lambda c: e.next_sheet(),
+            "excel_prev_sheet": lambda c: e.prev_sheet(),
+            "excel_autofit_columns": lambda c: e.autofit_columns(),
+            "excel_save": lambda c: e.save(c.get("path")),
+            "excel_save_as": lambda c: e.save_as(c["path"]),
+            "excel_close": lambda c: e.close_workbook(
+                save_changes=c.get("save_changes", False)
+            ),
+            "excel_quit": lambda c: e.quit_app(),
+        }
 
     def execute(self, command):
         action = command.get("action")
@@ -23,102 +105,8 @@ class OfficeController:
             return False
 
     def _dispatch(self, action, command):
-        # ---- PowerPoint ----
-        if action == "ppt_open":
-            self.ppt.open()
-        elif action == "ppt_open_file":
-            self.ppt.open_file(command["path"])
-        elif action == "ppt_new":
-            self.ppt.new_presentation()
-        elif action == "ppt_slide":
-            self.ppt.add_slide(
-                command.get("title", "Title"),
-                command.get("content", ""),
-            )
-        elif action == "ppt_slideshow":
-            self.ppt.start_slideshow()
-        elif action == "ppt_end_slideshow":
-            self.ppt.end_slideshow()
-        elif action == "ppt_next_slide":
-            self.ppt.next_slide()
-        elif action == "ppt_prev_slide":
-            self.ppt.prev_slide()
-        elif action == "ppt_save":
-            self.ppt.save(command.get("path"))
-        elif action == "ppt_save_as":
-            self.ppt.save_as(command["path"])
-        elif action == "ppt_close":
-            self.ppt.close_presentation()
-        elif action == "ppt_quit":
-            self.ppt.quit_app()
-
-        # ---- Word ----
-        elif action == "word_open":
-            self.word.open()
-        elif action == "word_open_file":
-            self.word.open_file(command["path"])
-        elif action == "word_new":
-            self.word.new_document()
-        elif action == "word_write":
-            self.word.write(command.get("text", ""))
-        elif action == "word_newline":
-            self.word.newline()
-        elif action == "word_save":
-            self.word.save(command.get("path"))
-        elif action == "word_save_as":
-            self.word.save_as(command["path"])
-        elif action == "word_close":
-            self.word.close_document(save_changes=command.get("save_changes", False))
-        elif action == "word_quit":
-            self.word.quit_app(save_changes=command.get("save_changes", False))
-        elif action == "word_bold":
-            self.word.bold()
-        elif action == "word_italic":
-            self.word.italic()
-        elif action == "word_underline":
-            self.word.underline()
-        elif action == "word_font_size":
-            self.word.font_size(float(command["size"]))
-        elif action == "word_page_break":
-            self.word.page_break()
-
-        # ---- Excel ----
-        elif action == "excel_open":
-            self.excel.open()
-        elif action == "excel_open_file":
-            self.excel.open_file(command["path"])
-        elif action == "excel_new":
-            self.excel.new_workbook()
-        elif action == "excel_write":
-            self.excel.write_cell(
-                int(command["row"]),
-                int(command["col"]),
-                command.get("value", ""),
-            )
-        elif action == "excel_select_cell":
-            self.excel.select_cell(int(command["row"]), int(command["col"]))
-        elif action == "excel_formula":
-            self.excel.set_formula(
-                int(command["row"]),
-                int(command["col"]),
-                str(command["formula"]),
-            )
-        elif action == "excel_next_sheet":
-            self.excel.next_sheet()
-        elif action == "excel_prev_sheet":
-            self.excel.prev_sheet()
-        elif action == "excel_autofit_columns":
-            self.excel.autofit_columns()
-        elif action == "excel_save":
-            self.excel.save(command.get("path"))
-        elif action == "excel_save_as":
-            self.excel.save_as(command["path"])
-        elif action == "excel_close":
-            self.excel.close_workbook(save_changes=command.get("save_changes", False))
-        elif action == "excel_quit":
-            self.excel.quit_app()
-
-        else:
+        handler = self._handlers.get(action)
+        if handler is None:
             return False
-
+        handler(command)
         return True

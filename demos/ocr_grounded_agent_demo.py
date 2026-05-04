@@ -43,12 +43,12 @@ from automation.action_space import (
     GROUNDED_ACTIONS,
     POST_GROUNDING_CLICK_DELAY_ACTIONS,
     UNKNOWN_ACTION,
+    is_office_action,
 )
 from perception.screen_capture import capture_screen
 from perception.debug_draw import draw_elements, draw_match, show_debug
 
 from com.office_controller import OfficeController
-from com.office_dispatcher import OfficeDispatcher
 
 # SentenceTransformer cosine * 100; short OCR strings often score lower than UIA names
 OCR_SCORE_THRESHOLD = 18.0
@@ -133,7 +133,6 @@ def main() -> None:
 
     text_input = TextInputGUI()
     office = OfficeController()
-    office_dispatcher = OfficeDispatcher()
 
     print("OCR-grounded agent demo (EasyOCR + semantic match + execute)")
     print(f"Languages: {args.lang} | match threshold: {args.threshold}")
@@ -164,7 +163,7 @@ def main() -> None:
                 )
                 continue
 
-            if office_dispatcher.is_office_command(command):
+            if is_office_action(command.get("action", "")):
                 print("Office COM command")
                 ok = office.execute(command)
                 print(f"Office ok={ok} | {time.time() - start:.2f}s")

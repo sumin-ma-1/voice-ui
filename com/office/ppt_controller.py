@@ -5,6 +5,8 @@ import os
 
 import win32com.client
 
+from com.office.foreground import bring_com_application_to_foreground
+
 
 class PowerPointController:
     def __init__(self):
@@ -15,6 +17,7 @@ class PowerPointController:
         if self.app is None:
             self.app = win32com.client.Dispatch("PowerPoint.Application")
             self.app.Visible = True
+        bring_com_application_to_foreground(self.app)
 
     def _active_presentation(self):
         self._connect()
@@ -22,6 +25,7 @@ class PowerPointController:
             self.presentation = self.app.Presentations.Add()
         else:
             self.presentation = self.app.ActivePresentation
+        bring_com_application_to_foreground(self.app)
         return self.presentation
 
     def open(self):
@@ -34,11 +38,13 @@ class PowerPointController:
         self._connect()
         path = os.path.abspath(os.path.expanduser(path.strip().strip('"').strip("'")))
         self.presentation = self.app.Presentations.Open(path, WithWindow=True)
+        bring_com_application_to_foreground(self.app)
         print("Opened presentation:", path)
 
     def new_presentation(self):
         self._connect()
         self.presentation = self.app.Presentations.Add()
+        bring_com_application_to_foreground(self.app)
         print("New presentation created")
 
     def add_slide(self, title: str, content: str):

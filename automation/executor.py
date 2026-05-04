@@ -1,11 +1,13 @@
 # automation/executor.py
 from __future__ import annotations
 
+import sys
 from typing import Any, Callable, NamedTuple
 
 import pyautogui
 
 from automation.action_space import GROUNDED_ACTIONS, PYAUTOGUI_ACTIONS
+from automation.window_focus import activate_window_by_title_substring
 
 MOVE_DURATION = 0.15
 TYPE_INTERVAL = 0.02
@@ -89,6 +91,13 @@ def _validate(action: str, params: dict[str, Any], element: dict | None) -> Exec
                 False,
                 f"scroll direction must be up, down, left, or right; got {direction!r}.",
             )
+    if action == "focus":
+        q = (params.get("query") or "").strip()
+        if not q:
+            return ExecuteResult(
+                False,
+                "focus needs text after the word focus, e.g. focus Chrome.",
+            )
     return None
 
 
@@ -111,6 +120,12 @@ def _run_hover(_params: dict[str, Any]) -> None:
 def _run_scroll(params: dict[str, Any]) -> None:
     direction = params.get("direction", "down")
     amount = int(params.get("amount", 500))
+    if sys.platform == "win32":
+        # PyAutoGUI Win32 ``hscroll`` incorrectly sends vertical wheel; use HWHEEL + 120-step deltas.
+        from automation.win32_scroll import scroll_at_cursor
+
+        scroll_at_cursor(str(direction), amount)
+        return
     if direction == "up":
         pyautogui.scroll(amount)
     elif direction == "down":
@@ -125,8 +140,19 @@ def _run_press_key(params: dict[str, Any]) -> None:
     pyautogui.press(params["key"])
 
 
+def _normalize_hotkey_token(name: str) -> str:
+    """Map spoken modifier names to PyAutoGUI key names (e.g. ``control`` → ``ctrl``)."""
+    t = str(name).strip().lower()
+    if t == "control":
+        return "ctrl"
+    if t == "windows":
+        return "win"
+    return t
+
+
 def _run_hotkey(params: dict[str, Any]) -> None:
-    keys = params.get("keys", [])
+    raw_keys = params.get("keys") or []
+    keys = [_normalize_hotkey_token(k) for k in raw_keys if str(k).strip()]
     pyautogui.hotkey(*keys)
 
 
@@ -203,6 +229,12 @@ def _run_refresh(_params: dict[str, Any]) -> None:
     pyautogui.press("f5")
 
 
+def _run_focus(params: dict[str, Any]) -> None:
+    err = activate_window_by_title_substring(str(params.get("query", "")))
+    if err is not None:
+        raise RuntimeError(err)
+
+
 _RUNNERS: dict[str, Callable[[dict[str, Any]], None]] = {
     "left_click": _run_left_click,
     "right_click": _run_right_click,
@@ -228,6 +260,7 @@ _RUNNERS: dict[str, Callable[[dict[str, Any]], None]] = {
     "close_tab": _run_close_tab,
     "switch_tab": _run_switch_tab,
     "refresh": _run_refresh,
+    "focus": _run_focus,
 }
 
 

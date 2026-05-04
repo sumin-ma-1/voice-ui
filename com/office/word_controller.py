@@ -5,6 +5,8 @@ import os
 
 import win32com.client
 
+from com.office.foreground import bring_com_application_to_foreground
+
 
 class WordController:
     def __init__(self):
@@ -15,6 +17,7 @@ class WordController:
         if self.app is None:
             self.app = win32com.client.Dispatch("Word.Application")
             self.app.Visible = True
+        bring_com_application_to_foreground(self.app)
 
     def _ensure_doc(self):
         self._connect()
@@ -25,17 +28,20 @@ class WordController:
     def open(self):
         self._connect()
         self.doc = self.app.Documents.Add()
+        bring_com_application_to_foreground(self.app)
         print("Word opened (new document)")
 
     def open_file(self, path: str):
         self._connect()
         path = os.path.abspath(os.path.expanduser(path.strip().strip('"').strip("'")))
         self.doc = self.app.Documents.Open(path)
+        bring_com_application_to_foreground(self.app)
         print("Opened Word document:", path)
 
     def new_document(self):
         self._connect()
         self.doc = self.app.Documents.Add()
+        bring_com_application_to_foreground(self.app)
         print("New Word document")
 
     def write(self, text: str):

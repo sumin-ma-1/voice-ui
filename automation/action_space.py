@@ -2,8 +2,9 @@
 # Single registry of parsed ``action`` strings: routing (grounding vs direct), COM, and post-exec delays.
 #
 # Parsers (``speech.command_parser``, ``speech.office_command_parser``) emit these names;
-# ``main`` / demos branch on DIRECT vs grounded; ``OfficeDispatcher`` / ``OfficeController`` handle OFFICE;
-# ``automation.executor.execute`` performs pyautogui for DIRECT ∪ GROUNDED ∪ ``switch_tab``.
+# ``main`` / demos branch on DIRECT vs grounded; ``is_office_action`` / ``OfficeController`` handle OFFICE;
+# ``automation.executor.execute`` runs DIRECT ∪ GROUNDED ∪ ``switch_tab`` (mostly PyAutoGUI);
+# ``focus`` uses Win32 window titles (see ``automation.window_focus``).
 
 from __future__ import annotations
 
@@ -44,6 +45,8 @@ DIRECT_ACTIONS: frozenset[str] = frozenset(
         "hotkey",
         # Implemented in ``executor``; parser may add phrases later.
         "switch_tab",
+        # Win32: activate top-level window by title substring (``automation.window_focus``).
+        "focus",
     }
 )
 
