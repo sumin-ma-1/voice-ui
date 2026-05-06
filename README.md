@@ -118,7 +118,7 @@ Exit phrases: `exit`, `quit`, `stop agent`, `shutdown`. Interrupt with **Ctrl+C*
 
 ---
 
-## Dataset Logging (action-time collection)
+## Dataset Logging
 
 This project can append one dataset event per automation execution and optionally save the matched target crop.
 
