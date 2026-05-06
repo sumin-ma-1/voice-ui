@@ -43,8 +43,8 @@ def run_uia_match_step(
     used_mode_on_miss: str,
 ) -> tuple[dict | None, float, str, np.ndarray]:
     """
-    Try UIA extraction + semantic match. On confident match, draw elements on ``frame``
-    and return ``used_mode`` = ``STAGE_UIA``. Otherwise refresh ``frame`` from screen,
+    Try UIA extraction + semantic match. On confident match, keep ``frame`` raw and
+    return ``used_mode`` = ``STAGE_UIA``. Otherwise refresh ``frame`` from screen,
     optionally save debug of UIA candidates, and return ``match`` is None.
     """
     print(heading)
@@ -60,7 +60,7 @@ def run_uia_match_step(
         match, score = find_best_match(query, uia_filtered, screen=frame)
 
         if match and score > uia_threshold:
-            return match, score, STAGE_UIA, draw_elements(frame, uia_filtered)
+            return match, score, STAGE_UIA, frame
 
         if match:
             print("[UIA] Best candidate:", match["name"], "| score:", score)
@@ -95,7 +95,7 @@ def run_ocr_match_step(
     match, score = find_best_match(query, ocr_filtered, screen=frame)
 
     if match and score > ocr_threshold:
-        return match, score, STAGE_OCR, draw_elements(frame, ocr_filtered)
+        return match, score, STAGE_OCR, frame
 
     if match:
         print("[OCR] Best candidate:", match["name"], "| score:", score)
@@ -122,7 +122,7 @@ def run_vision_match_step(
     match, score = find_best_match(query, vision_filtered, screen=frame)
 
     if match and score > vision_threshold:
-        return match, score, STAGE_VISION, draw_elements(frame, vision_filtered)
+        return match, score, STAGE_VISION, frame
 
     if match:
         print("[Vision] Best candidate:", match["name"], "| score:", score)

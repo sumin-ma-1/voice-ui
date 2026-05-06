@@ -51,6 +51,7 @@ from perception.screen_capture import capture_screen
 from perception.debug_draw import draw_elements, draw_match, show_debug
 
 from com.office_controller import OfficeController
+from dataset.data_logger import prepare_grounding_artifacts
 
 # ---- MODE-specific THRESHOLDS ----
 # Single modes (uia / ocr / vision) use the key matching --mode.
@@ -98,6 +99,8 @@ def main(mode):
             print(f"Timer starts.")
 
             command = parse_command(text)
+            command["_raw_text"] = text
+            command["_mode_used"] = mode
 
             action = command["action"]
 
@@ -226,8 +229,6 @@ def main(mode):
 
                 print(f"[ocr] {len(ocr_elements)} lines → {len(filtered)} after filter")
 
-                frame = draw_elements(frame, filtered)
-
                 match, score = find_best_match(query, filtered, screen=frame)
 
             elif mode in ("uia", "vision"):
@@ -236,8 +237,6 @@ def main(mode):
                 filtered = filter_elements(elements)
 
                 print(f"[{mode}] {len(elements)} → {len(filtered)}")
-
-                frame = draw_elements(frame, filtered)
 
                 match, score = find_best_match(query, filtered, screen=frame)
 
@@ -265,10 +264,34 @@ def main(mode):
 
             if cascade_ok:
 
-                frame = draw_match(frame, match)
+                frame_for_dataset = frame.copy() if frame is not None else None
+                artifacts = prepare_grounding_artifacts(
+                    raw_text=text,
+                    action=action,
+                    query=query,
+                    mode_used=used_mode,
+                    match=match,
+                    score=score,
+                    frame=frame_for_dataset,
+                )
+                if artifacts:
+                    command["_dataset_event_id"] = artifacts.get("event_id")
+                    command["_dataset_frame_path"] = artifacts.get("frame_path")
+                    command["_dataset_crop_path"] = artifacts.get("crop_path")
+                    command["_dataset_score"] = artifacts.get("score")
+                    command["_dataset_target_name"] = artifacts.get("target_name")
+                    command["_mode_used"] = used_mode
 
-                if frame is not None:
-                    show_debug(frame)
+                debug_frame = frame.copy() if frame is not None else None
+                if debug_frame is not None:
+                    if mode == "ocr":
+                        debug_frame = draw_elements(debug_frame, filtered)
+                    elif mode in ("uia", "vision"):
+                        debug_frame = draw_elements(debug_frame, filtered)
+                    debug_frame = draw_match(debug_frame, match)
+
+                if debug_frame is not None:
+                    show_debug(debug_frame)
 
                 result = execute(
                     action,

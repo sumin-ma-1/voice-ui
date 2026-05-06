@@ -118,6 +118,52 @@ Exit phrases: `exit`, `quit`, `stop agent`, `shutdown`. Interrupt with **Ctrl+C*
 
 ---
 
+## Dataset Logging (action-time collection)
+
+This project can append one dataset event per automation execution and optionally save the matched target crop.
+
+### Toggle with environment variables
+
+| Variable | Value | Effect |
+|----------|-------|--------|
+| `VOICE_UI_DATASET_LOG` | `1`, `true`, `yes`, or `on` | Enable dataset logging |
+| `VOICE_UI_DATASET_LOG` | *(unset or any other value)* | Disable dataset logging (default) |
+| `VOICE_UI_DATASET_DIR` | path string | Dataset root directory (default: `dataset`) |
+
+PowerShell example:
+
+```powershell
+$env:VOICE_UI_DATASET_LOG = "1"
+$env:VOICE_UI_DATASET_DIR = "dataset"
+python main.py --mode all
+```
+
+### What gets written
+
+When enabled, the logger writes:
+
+- `dataset/events.jsonl`: one JSON line per `execute(...)` call
+- `dataset/frames/*.png`: full frame at grounded-action time
+- `dataset/crops/*.png`: crop from matched target `bbox` (when available)
+
+### Event fields
+
+Core fields include:
+
+- `event_id`, `ts`, `session_id`
+- `raw_text`, `action`, `query`, `mode_used`
+- `ok`, `reason`
+- `target` (`name`, `bbox`, `center`)
+- `artifacts` (`frame_path`, `crop_path`)
+
+### Important behavior guarantees
+
+- Logging is best-effort and isolated from execution; logger errors are swallowed so automation keeps running.
+- Default behavior is unchanged because logging is OFF unless explicitly enabled.
+- Dataset frame/crop are captured from the raw frame path before debug overlays are drawn to `show_debug`.
+
+---
+
 ## Layout (runtime)
 
 ```

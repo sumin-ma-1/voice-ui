@@ -8,6 +8,7 @@ import pyautogui
 
 from automation.action_space import GROUNDED_ACTIONS, PYAUTOGUI_ACTIONS
 from automation.window_focus import activate_window_by_title_substring
+from dataset.data_logger import log_execute_event
 
 MOVE_DURATION = 0.15
 TYPE_INTERVAL = 0.02
@@ -273,27 +274,45 @@ def execute(action: str, element=None, params=None) -> ExecuteResult:
     """
     params = dict(params or {})
 
+    def _finalize(result: ExecuteResult) -> ExecuteResult:
+        try:
+            log_execute_event(
+                action=action,
+                params=params,
+                element=element,
+                ok=result.ok,
+                reason=result.reason,
+            )
+        except Exception:
+            # Dataset logging must never block automation execution.
+            pass
+        return result
+
     err = _validate(action, params, element)
     if err is not None:
-        return err
+        return _finalize(err)
 
     move_err = _move_to_element(element)
     if move_err is not None:
-        return move_err
+        return _finalize(move_err)
 
     runner = _RUNNERS.get(action)
     if runner is None:
-        return ExecuteResult(
+        return _finalize(
+            ExecuteResult(
             False,
             f"No runner registered for action {action!r} (add it to _RUNNERS and action_space).",
+            )
         )
 
     try:
         runner(params)
     except Exception as e:
-        return ExecuteResult(
+        return _finalize(
+            ExecuteResult(
             False,
             f"Automation failed while running {action!r}: {type(e).__name__}: {e}",
+            )
         )
 
-    return ExecuteResult(True, None)
+    return _finalize(ExecuteResult(True, None))
