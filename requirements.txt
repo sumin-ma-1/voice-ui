@@ -11,3 +11,5 @@ sentence-transformers
 git+https://github.com/openai/CLIP.git
 ultralytics
 easyocr
+webrtcvad
+customtkinter

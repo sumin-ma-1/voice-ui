@@ -1,6 +1,8 @@
-# Voice UI — typed command → parse → Office, direct keys, or grounded UI action
+# Voice UI — typed or spoken command → parse → Office, direct keys, or grounded UI action
 
-Windows desktop loop: floating prompt → structured command → Microsoft Office (COM), PyAutoGUI shortcuts, or **screen capture + element matching** (UIA, OCR, and/or vision).
+Windows desktop loop: **text bar** (development default) or **hands‑free voice + floating UI** → structured command → Microsoft Office (COM), PyAutoGUI shortcuts, or **screen capture + element matching** (UIA, OCR, and/or vision).
+
+All runnable paths go through **`agent/process_utterance.py`** so behavior stays aligned. Optional **dataset logging** (`VOICE_UI_DATASET_LOG`) records executions and grounded crops to disk without changing default runtime behavior.
 
 ---
 
@@ -9,14 +11,14 @@ Windows desktop loop: floating prompt → structured command → Microsoft Offic
 ```mermaid
 flowchart TD
     subgraph in [Input]
-        GUI[TextInputGUI]
+        IN[TextInputGUI or VoiceSession plus floating UI]
     end
 
-    subgraph parse [Parse]
-        PC[command_parser.parse_command]
+    subgraph core [Shared pipeline]
+        PU[agent/process_utterance — parse + route + execute path]
     end
 
-    subgraph route [main.py branches]
+    subgraph route [Routing]
         O{action in OFFICE_ACTIONS?}
         D{Direct action?}
         G[UI-grounded: click / hover / …]
@@ -35,8 +37,8 @@ flowchart TD
         EX[automation.executor.execute]
     end
 
-    GUI -->|string| PC
-    PC --> O
+    IN -->|string| PU
+    PU --> O
     O -->|yes| OC
     O -->|no| D
     D -->|yes| EX
@@ -56,7 +58,7 @@ flowchart TD
 | `both` | UIA first; if no confident match, fresh capture → vision |
 | `all` | UIA → full-frame OCR → vision (three-step fallback) |
 
-Single modes use `perception/ui_extractor.py` (`uia` / `vision`). Cascades use `perception/ui_fallback_pipeline.py` and, for OCR, `perception/ocr_elements.py`. Default: `python main.py` → `--mode uia`.
+Single modes use `perception/ui_extractor.py` (`uia` / `vision`). Cascades use `perception/ui_fallback_pipeline.py` and, for OCR, `perception/ocr_elements.py`. Cascade match steps return **raw frames** (no debug overlay on the frame used for grounding/dataset crops). Default: `python main.py` → `--mode uia`.
 
 ### UIA: on-screen (default) vs classic tree
 
@@ -106,21 +108,69 @@ Parsed `action` strings and how they are routed are defined in **`automation/act
 
 ## Run
 
+| Goal | Command |
+|------|---------|
+| **Development (text bar)** | `python main.py --mode uia` — same as `--input text` (default) |
+| **Hands‑free voice** | `python main.py --mode all --input voice` |
+| **Dataset collection on** | Set `VOICE_UI_DATASET_LOG=1` (see [Dataset Logging](#dataset-logging)) |
+
 ```bash
-python main.py --mode uia      # default
+python main.py --mode uia        # default mode + default text input
 python main.py --mode ocr
 python main.py --mode vision
 python main.py --mode both
 python main.py --mode all
+python main.py --mode all --input text    # explicit dev text bar
+python main.py --mode all --input voice   # wake phrase + floating overlay
 ```
 
-Exit phrases: `exit`, `quit`, `stop agent`, `shutdown`. Interrupt with **Ctrl+C** between commands.
+**`--input`:**
+
+| Value | Behavior |
+|-------|----------|
+| `text` *(default)* | Compact always‑on‑top bar (`speech/text_input_gui.py`): type a command, Enter to submit (good when mic/STT is inconvenient). |
+| `voice` | Floating status widget (`speech/floating_voice_widget.py`) + wake phrase **“Hey Voice UI”** / **“Hey Voice”** + mic pipeline (`speech/voice_session.py`). |
+
+Exit phrases (typed or spoken after wake): `exit`, `quit`, `stop agent`, `shutdown`. With **`--input voice`**, during the grace window before automation you can say **stop** (cancel this action) or **exit** (quit the app). Interrupt with **Ctrl+C** in the terminal.
+
+---
+
+## Voice UI (floating overlay)
+
+**Modules:** `speech/floating_voice_widget.py` (LED state, transcript line, pipeline guide, **Confirm before run** toggle), `speech/voice_session.py` (mic → VAD → Whisper → wake phrase gate → command queue), `perception/grounding_highlight.py` (full‑screen highlight ring before execute when a Tk parent exists).
+
+Hands‑free flow:
+
+1. Say **Hey Voice UI**, then your command in the **same utterance** or the **next** utterance. Parser input strips the wake phrase when present (`agent/process_utterance.py`).
+2. While the agent finds a UI target, the strip shows status text (“Finding target…”, etc.).
+3. After grounding, the matched region is **highlighted** briefly on screen (duration scales with grace length).
+4. **Grace window** (`VOICE_UI_GRACE_SECONDS`, default ~0.85s) — **only when `--input voice`**: say **stop** to cancel before automation runs, or **exit** to quit the app. **`--input text` has no extra grace delay** (immediate execute path after confirmations).
+5. Optional **Confirm before run** checkbox: `tkinter` confirmation dialog before Office / direct / grounded execution.
+
+### Voice stack
+
+| Piece | Role |
+|-------|------|
+| **WebRTC VAD** (`webrtcvad`) | End‑of‑utterance segmentation (preferred). If import fails, a simple **energy gate** fallback is used (install `webrtcvad` from `requirements.txt`). |
+| **OpenAI Whisper** (`tiny` default) | Transcription (`speech/whisper_engine.py`); optional `transcribe_pcm16` for raw PCM. |
+
+Wake words are matched on **Whisper text** (not a dedicated wake embedded model). Partial **live transcript** updates are best‑effort (periodic Whisper passes while you speak); final text is shown when a segment ends.
+
+### Environment variables (voice)
+
+| Variable | Effect |
+|----------|--------|
+| `VOICE_UI_GRACE_SECONDS` | Grace delay before execute / Office / direct / grounded actions when `--input voice` (default `0.85`). |
+| `VOICE_UI_WHISPER_MODEL` | Whisper size (default `tiny`). |
+| `VOICE_UI_WHISPER_LANG` | Force Whisper language (e.g. `ko`, `en`). Unset lets Whisper choose where supported. |
+| `VOICE_UI_VAD_AGGRESSIVENESS` | WebRTC VAD `0`–`3` (default `2`). |
+| `VOICE_UI_ENERGY_GATE` | RMS threshold when VAD falls back to energy gating (default `280`). |
 
 ---
 
 ## Dataset Logging
 
-This project can append one dataset event per automation execution and optionally save the matched target crop.
+When enabled, every call to **`automation/executor.execute`** appends one JSON line to **`dataset/events.jsonl`** (`dataset/data_logger.py`). Grounded UI actions additionally save **raw** full‑frame and **bbox crop** images at successful match time from **`agent/process_utterance.prepare_grounding_artifacts`** (same code path for **`--input text`** and **`--input voice`**).
 
 ### Toggle with environment variables
 
@@ -130,12 +180,15 @@ This project can append one dataset event per automation execution and optionall
 | `VOICE_UI_DATASET_LOG` | *(unset or any other value)* | Disable dataset logging (default) |
 | `VOICE_UI_DATASET_DIR` | path string | Dataset root directory (default: `dataset`) |
 
-PowerShell example:
+PowerShell examples:
 
 ```powershell
 $env:VOICE_UI_DATASET_LOG = "1"
 $env:VOICE_UI_DATASET_DIR = "dataset"
-python main.py --mode all
+python main.py --mode all --input text
+
+$env:VOICE_UI_DATASET_LOG = "1"
+python main.py --mode all --input voice
 ```
 
 ### What gets written
@@ -160,7 +213,7 @@ Core fields include:
 
 - Logging is best-effort and isolated from execution; logger errors are swallowed so automation keeps running.
 - Default behavior is unchanged because logging is OFF unless explicitly enabled.
-- Dataset frame/crop are captured from the raw frame path before debug overlays are drawn to `show_debug`.
+- Dataset frame/crop use the **raw capture** (before **match/candidate** debug overlays). Debug snapshots may still be written under `test_screen_img/` by `perception/debug_draw.show_debug` for developer inspection.
 
 ---
 
@@ -169,9 +222,11 @@ Core fields include:
 ```
 voice-ui/
 ├── main.py
+├── agent/            # process_utterance (shared text + voice pipeline)
+├── dataset/          # data_logger (optional events.jsonl + frames/crops)
 ├── requirements.txt
-├── speech/           # TextInputGUI, command_parser (+ command_parser_rules table), office_command_parser (Whisper optional, not wired in main)
-├── perception/       # capture, ui_extractor (UIA default=on-screen), uia_onscreen_extractor, grounding_cascade, ocr_elements, ui_fallback_pipeline, icon_utils, filter, debug_draw
+├── speech/           # TextInputGUI, floating_voice_widget, voice_session (wake + VAD), whisper_engine, command_parser (+ rules), office_command_parser
+├── perception/       # capture, ui_extractor, grounding_cascade, grounding_highlight, ocr_elements, ui_fallback_pipeline, icon_utils, filter, debug_draw
 ├── grounding/        # matcher (SentenceTransformers + CLIP for icons)
 ├── automation/       # action_space.py, executor.py, window_focus.py (``focus``), win32_scroll.py (wheel on Windows)
 ├── com/              # office_controller, office/foreground.py (focus), office/* (ppt/word/excel COM); branch gated by action_space.is_office_action in main / demos
@@ -185,6 +240,19 @@ Vision expects **`epoch235.pt`** (YOLO) in the working directory (or where Ultra
 
 ## Dependencies
 
-Install from **`requirements.txt`** (PyAutoGUI, pywinauto, OpenCV, Sentence Transformers, CLIP, Ultralytics, EasyOCR, etc.). GPU is optional; COM path needs Office installed for those commands.
+Install from **`requirements.txt`**: PyAutoGUI, pywinauto, OpenCV, Sentence Transformers, CLIP, Ultralytics, EasyOCR, **webrtcvad** (voice end‑pointing; optional fallback if missing), PyAudio, OpenAI Whisper, etc. GPU is optional; COM path needs Office installed for those commands.
 
 Use a **virtualenv**; keep `venv/` out of git (see `.gitignore`).
+
+---
+
+## Environment variables (quick reference)
+
+| Variable | Area | Purpose |
+|----------|------|---------|
+| `VOICE_UI_UIA_USE_CLASSIC` | UIA | Classic `descendants` tree instead of on-screen walk |
+| `VOICE_UI_DATASET_LOG` | Dataset | Enable `events.jsonl` + frame/crop artifacts |
+| `VOICE_UI_DATASET_DIR` | Dataset | Root folder (default `dataset`) |
+| `VOICE_UI_GRACE_SECONDS` | Voice | Pre‑execute cancel window when `--input voice` |
+| `VOICE_UI_WHISPER_MODEL` / `VOICE_UI_WHISPER_LANG` | Voice / STT | Whisper size and language |
+| `VOICE_UI_VAD_AGGRESSIVENESS` / `VOICE_UI_ENERGY_GATE` | Voice / VAD | WebRTC VAD level or energy fallback threshold |

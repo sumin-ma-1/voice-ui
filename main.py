@@ -1,323 +1,129 @@
 # main.py
 # Main script: UI grounding modes via --mode
-# How to run:
-#   python main.py --mode {uia|ocr|vision|both|all}
-#
-#   uia     — accessibility tree only
-#   ocr     — full-frame EasyOCR only
-#   vision  — YOLO icons + localized OCR only
-#   both    — UIA then vision (two-step fallback)
-#   all     — UIA then full-frame OCR then vision (three-step fallback)
-#
-#   To escape the running agent, press Ctrl+C
-#   To exit the agent, type "exit", "quit", "stop agent", "shutdown"
-#   UIA defaults to native on-screen extraction (``IsOffscreen`` + DFS prune); see
-#   ``perception.uia_onscreen_extractor``. To use classic ``descendants`` instead, set
-#   ``VOICE_UI_UIA_USE_CLASSIC`` to 1 / true / yes / on. Remove the variable (or any other
-#   value) to use on-screen UIA again.
-#   PowerShell classic: ``$env:VOICE_UI_UIA_USE_CLASSIC = "1"``
-#   See ``perception.ui_extractor`` for details.
+# Input: --input text (default, dev) | voice (wake phrase + floating UI)
 
 import argparse
-import time
+import queue
+import threading
 
-from speech.text_input_gui import TextInputGUI
-from speech.command_parser import parse_command
-
-from perception.ui_extractor import extract_elements_by_mode
-from perception.ui_filter import filter_elements
-from perception.ui_fallback_pipeline import (
-    run_fullframe_ocr_stage,
-    STAGE_UIA,
-    STAGE_OCR,
-    STAGE_VISION,
-)
-from perception.grounding_cascade import (
-    run_ocr_match_step,
-    run_uia_match_step,
-    run_vision_match_step,
-)
-from perception.ocr_elements import create_easyocr_reader
-from grounding.matcher import find_best_match
-from automation.executor import execute
-from automation.action_space import (
-    DIRECT_ACTIONS,
-    POST_GROUNDING_CLICK_DELAY_ACTIONS,
-    UNKNOWN_ACTION,
-    is_office_action,
-)
-
-from perception.screen_capture import capture_screen
-from perception.debug_draw import draw_elements, draw_match, show_debug
-
+from agent.process_utterance import ensure_ocr_reader, process_utterance
 from com.office_controller import OfficeController
-from dataset.data_logger import prepare_grounding_artifacts
+from speech.floating_voice_widget import FloatingVoiceUI
+from speech.text_input_gui import TextInputGUI
+from speech.voice_session import VoiceSession
 
-# ---- MODE-specific THRESHOLDS ----
-# Single modes (uia / ocr / vision) use the key matching --mode.
-# Cascades (both / all) apply STAGE_UIA / STAGE_OCR / STAGE_VISION inside the loop.
-SCORE_THRESHOLD = {
-    "uia": 31,
-    "ocr": 18,
-    "vision": 15,
-}
 
-def main(mode):
+def main(mode: str, input_kind: str) -> None:
 
-    text_input = TextInputGUI()
-
-    # ---- OFFICE COM ----
     office = OfficeController()
 
-    # EasyOCR is only needed for full-frame OCR (single ``ocr`` mode or ``all`` cascade).
     ocr_reader = None
-    if mode in ("ocr", "all"):
-        print("[Init] Loading EasyOCR for full-frame OCR (one-time, may take a while)...")
-        ocr_reader = create_easyocr_reader()
+    ocr_reader = ensure_ocr_reader(mode, ocr_reader)
 
-    print(f"Experiment agent started  [mode={mode}]")
+    print(f"Experiment agent started  [mode={mode}]  [input={input_kind}]")
 
-    while True:
+    if input_kind == "text":
+        text_input = TextInputGUI()
 
-        frame = None
+        while True:
+            try:
+                text = text_input.get_input()
+
+                if not text:
+                    continue
+
+                r = process_utterance(
+                    text,
+                    mode=mode,
+                    ocr_reader=ocr_reader,
+                    office=office,
+                    ui=None,
+                    voice=None,
+                )
+                if r == "exit":
+                    break
+
+            except KeyboardInterrupt:
+                print("\nCommand cancelled. Waiting for next command...")
+                continue
+
+            except Exception as e:
+                print("Error:", e)
+
+        return
+
+    # ---- Voice + floating UI ----
+    cmd_queue: queue.Queue[str | None] = queue.Queue()
+    shutdown = threading.Event()
+
+    ui = FloatingVoiceUI(on_close=lambda: shutdown.set())
+
+    def pump_commands() -> None:
+        if shutdown.is_set():
+            try:
+                ui.root.quit()
+            except Exception:
+                pass
+            return
+
+        voice_session.set_main_busy(False)
+        ui.set_led("idle")
+        ui.set_pipeline_guide('Say: "Hey Voice UI" — then your command.')
 
         try:
+            while True:
+                text = cmd_queue.get_nowait()
+                if text is None:
+                    shutdown.set()
+                    ui.root.quit()
+                    return
 
-            text = text_input.get_input()
+                ui.set_led("processing")
+                ui.set_transcript_line(text)
+                voice_session.set_main_busy(True)
 
-            if not text:
-                continue
-
-            if text.lower() in ["exit", "quit", "stop agent", "shutdown"]:
-                print("Shutting down agent...")
-                break
-
-            print("User typed:", text)
-
-            # ---- START TIMER ----
-            start_time = time.time()
-            print(f"Timer starts.")
-
-            command = parse_command(text)
-            command["_raw_text"] = text
-            command["_mode_used"] = mode
-
-            action = command["action"]
-
-            print("Parsed command:", command)
-
-            # ---- NO ACTION DETECTED ----
-            if action == UNKNOWN_ACTION:
-                # Parser could not map text → known action (distinct from executor / Office failures).
-                print(
-                    "Could not parse that as a known command. "
-                    "Try examples: click Save, type hello, copy, open word, scroll down."
-                )
-                continue
-
-            # ---- OFFICE COM ----
-
-            if is_office_action(command.get("action", "")):
-
-                print("Office COM command detected")
-
-                success = office.execute(command)
-
-                # ---- END TIMER ----
-                print(f"Execution time: {time.time() - start_time:.4f} sec")
-
-                if not success:
-                    print("Office command failed")
-
-                continue
-
-            # ---- DIRECT ACTIONS (NO UI MATCHING) ----
-            if action in DIRECT_ACTIONS:
-
-                print("Direct action:", action)
-
-                result = execute(
-                    action,
-                    element=None,
-                    params=command,
-                )
-                if not result.ok:
-                    print(result.reason)
-
-                continue
-
-            # ----------------------------------------
-            # UI-GROUNDED ACTIONS (click, hover, etc.)
-            # ----------------------------------------
-
-            # ---- IMAGE LOAD or SCREEN CAPTURE 대체 ----
-            frame = capture_screen()
-            # image_path = 'Screenshot.png' # path to the image file to load
-            # frame = cv2.imread(image_path)
-            # if frame is None:
-            #     print(f"Error: Couldn't find the directory({image_path}).")
-
-            # ---- SEMANTIC MATCHING ----
-            query = command.get("query", text)
-
-            match = None
-            score = 0.0
-            used_mode = mode
-
-            # =========================
-            # Cascade modes: all = UIA → OCR → vision; both = UIA → vision
-            # =========================
-            if mode == "all":
-                match, score, used_mode, frame = run_uia_match_step(
-                    frame,
-                    query,
-                    uia_threshold=SCORE_THRESHOLD[STAGE_UIA],
-                    heading="\n[STEP 1] Try UIA",
-                    no_match_fallback_message=(
-                        "[UIA] No confident match → fallback to full-frame OCR"
-                    ),
-                    used_mode_on_miss=mode,
-                )
-                if match is None:
-                    match, score, used_mode, frame = run_ocr_match_step(
-                        frame,
-                        query,
-                        ocr_reader,
-                        ocr_threshold=SCORE_THRESHOLD[STAGE_OCR],
-                        heading="\n[STEP 2] Try full-frame OCR",
-                        no_match_fallback_message=(
-                            "[OCR] No confident match → fallback to vision (icons + local OCR)"
-                        ),
-                        used_mode_on_miss=mode,
+                try:
+                    r = process_utterance(
+                        text,
+                        mode=mode,
+                        ocr_reader=ocr_reader,
+                        office=office,
+                        ui=ui,
+                        voice=voice_session,
                     )
-                if match is None:
-                    match, score, used_mode, frame = run_vision_match_step(
-                        frame,
-                        query,
-                        vision_threshold=SCORE_THRESHOLD[STAGE_VISION],
-                        heading="\n[STEP 3] Try vision (YOLO + localized OCR)",
-                        used_mode_on_miss=mode,
-                    )
+                    if r == "exit":
+                        shutdown.set()
+                        ui.root.quit()
+                        return
+                finally:
+                    voice_session.set_main_busy(False)
 
-            elif mode == "both":
-                match, score, used_mode, frame = run_uia_match_step(
-                    frame,
-                    query,
-                    uia_threshold=SCORE_THRESHOLD[STAGE_UIA],
-                    heading="\n[STEP 1] Try UIA",
-                    no_match_fallback_message=(
-                        "[UIA] No confident match → fallback to vision (YOLO + localized OCR)"
-                    ),
-                    used_mode_on_miss=mode,
-                )
-                if match is None:
-                    match, score, used_mode, frame = run_vision_match_step(
-                        frame,
-                        query,
-                        vision_threshold=SCORE_THRESHOLD[STAGE_VISION],
-                        heading="\n[STEP 2] Try vision (YOLO + localized OCR)",
-                        used_mode_on_miss=mode,
-                    )
+                ui.clear_transcript()
 
-            # =========================
-            # Single modes: uia, ocr, vision
-            # =========================
-            elif mode == "ocr":
+        except queue.Empty:
+            pass
 
-                ocr_elements = run_fullframe_ocr_stage(frame, ocr_reader, conf_min=0.35)
-                filtered = filter_elements(ocr_elements)
+        if not shutdown.is_set():
+            ui.root.after(120, pump_commands)
 
-                print(f"[ocr] {len(ocr_elements)} lines → {len(filtered)} after filter")
+    voice_session = VoiceSession(
+        cmd_queue,
+        on_status=lambda m: ui.root.after(
+            0, lambda mm=m: ui.set_pipeline_guide(mm)
+        ),
+        on_partial_line=lambda p: ui.root.after(
+            0, lambda pp=p: ui.set_transcript_line(pp)
+        ),
+    )
 
-                match, score = find_best_match(query, filtered, screen=frame)
+    voice_session.start()
+    ui.root.after(150, pump_commands)
 
-            elif mode in ("uia", "vision"):
-
-                elements = extract_elements_by_mode(mode)
-                filtered = filter_elements(elements)
-
-                print(f"[{mode}] {len(elements)} → {len(filtered)}")
-
-                match, score = find_best_match(query, filtered, screen=frame)
-
-            else:
-                raise ValueError(f"Unsupported mode: {mode!r}")
-
-            # ---- RESULT ----
-            print("\nGROUNDING RESULT")
-            print("Action:", action)
-            print("Query:", query)
-            print("Mode used:", used_mode)
-
-            if match:
-                print("Matched element:", match["name"])
-                print("Score:", score)
-            else:
-                print("No element selected after matching.")
-
-            # Cascades apply thresholds per stage; single modes use SCORE_THRESHOLD[mode].
-            if mode in ("both", "all"):
-                cascade_ok = match is not None
-            else:
-                threshold = SCORE_THRESHOLD[mode]
-                cascade_ok = bool(match) and score > threshold
-
-            if cascade_ok:
-
-                frame_for_dataset = frame.copy() if frame is not None else None
-                artifacts = prepare_grounding_artifacts(
-                    raw_text=text,
-                    action=action,
-                    query=query,
-                    mode_used=used_mode,
-                    match=match,
-                    score=score,
-                    frame=frame_for_dataset,
-                )
-                if artifacts:
-                    command["_dataset_event_id"] = artifacts.get("event_id")
-                    command["_dataset_frame_path"] = artifacts.get("frame_path")
-                    command["_dataset_crop_path"] = artifacts.get("crop_path")
-                    command["_dataset_score"] = artifacts.get("score")
-                    command["_dataset_target_name"] = artifacts.get("target_name")
-                    command["_mode_used"] = used_mode
-
-                debug_frame = frame.copy() if frame is not None else None
-                if debug_frame is not None:
-                    if mode == "ocr":
-                        debug_frame = draw_elements(debug_frame, filtered)
-                    elif mode in ("uia", "vision"):
-                        debug_frame = draw_elements(debug_frame, filtered)
-                    debug_frame = draw_match(debug_frame, match)
-
-                if debug_frame is not None:
-                    show_debug(debug_frame)
-
-                result = execute(
-                    action,
-                    element=match,
-                    params=command,
-                )
-                if not result.ok:
-                    print(result.reason)
-                elif action in POST_GROUNDING_CLICK_DELAY_ACTIONS:
-                    time.sleep(1.5)
-
-                # ---- END TIMER ----
-                print(f"Execution time: {time.time() - start_time:.4f} sec")
-
-            else:
-
-                print("No confident UI match")
-
-        except KeyboardInterrupt:
-
-            print("\nCommand cancelled. Waiting for next command...")
-            continue
-
-        except Exception as e:
-
-            print("Error:", e)
+    try:
+        ui.run()
+    finally:
+        voice_session.stop()
+        shutdown.set()
 
 
 if __name__ == "__main__":
@@ -333,6 +139,12 @@ if __name__ == "__main__":
             "all = UIA→OCR→vision"
         ),
     )
+    parser.add_argument(
+        "--input",
+        choices=["text", "voice"],
+        default="text",
+        help='text = floating prompt (dev); voice = wake phrase + minimal floating UI',
+    )
     args = parser.parse_args()
 
-    main(args.mode)
+    main(args.mode, args.input)
