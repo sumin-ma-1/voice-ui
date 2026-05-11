@@ -15,7 +15,11 @@ from automation.action_space import (
 )
 from automation.executor import execute
 from com.office_controller import OfficeController
-from dataset.data_logger import prepare_grounding_artifacts
+from dataset.data_logger import (
+    append_hard_negative_rows,
+    extra_negatives_cap,
+    prepare_grounding_artifacts,
+)
 from grounding.matcher import find_best_match
 from perception.debug_draw import draw_elements, draw_match, show_debug
 from perception.grounding_cascade import (
@@ -33,6 +37,8 @@ from perception.ui_fallback_pipeline import (
     STAGE_UIA,
     STAGE_VISION,
     run_fullframe_ocr_stage,
+    run_uia_stage,
+    run_vision_icon_stage,
 )
 from speech.command_parser import parse_command
 from speech.voice_session import contains_wake_phrase, strip_wake_phrase
@@ -55,6 +61,22 @@ EXIT_PHRASES = frozenset(
         "shutdown",
     }
 )
+
+
+def _filtered_candidates_for_used_mode(
+    used_mode: str, frame: Any, ocr_reader: Any
+) -> list[dict[str, Any]]:
+    """Rebuild candidate list for the stage that won (for hard-negative dataset mining)."""
+    um = (used_mode or "").lower()
+    if um == "uia":
+        return filter_elements(run_uia_stage())
+    if um == "ocr":
+        if ocr_reader is None:
+            return []
+        return filter_elements(run_fullframe_ocr_stage(frame, ocr_reader, conf_min=0.35))
+    if um == "vision":
+        return filter_elements(run_vision_icon_stage(frame))
+    return []
 
 
 def _grace_wait(
@@ -279,6 +301,9 @@ def process_utterance(
     else:
         raise ValueError(f"Unsupported mode: {mode!r}")
 
+    if mode in ("both", "all") and match is not None:
+        filtered = _filtered_candidates_for_used_mode(used_mode, frame, ocr_reader)
+
     print("\nGROUNDING RESULT")
     print("Action:", action)
     print("Query:", query)
@@ -317,6 +342,22 @@ def process_utterance(
         command["_dataset_score"] = artifacts.get("score")
         command["_dataset_target_name"] = artifacts.get("target_name")
         command["_mode_used"] = used_mode
+
+        n_extra = extra_negatives_cap()
+        if n_extra > 0 and filtered and artifacts.get("event_id") and frame_for_dataset is not None:
+            append_hard_negative_rows(
+                parent_event_id=str(artifacts["event_id"]),
+                frame_path=artifacts.get("frame_path"),
+                raw_text=text,
+                action=action,
+                query=query,
+                mode_used=used_mode,
+                frame=frame_for_dataset,
+                positive_bbox=match.get("bbox"),
+                candidates=filtered,
+                positive_name=match.get("name"),
+                max_extra=n_extra,
+            )
 
     if ui is not None:
         ui.set_pipeline_guide("Highlighting target…")

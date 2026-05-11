@@ -179,6 +179,7 @@ When enabled, every call to **`automation/executor.execute`** appends one JSON l
 | `VOICE_UI_DATASET_LOG` | `1`, `true`, `yes`, or `on` | Enable dataset logging |
 | `VOICE_UI_DATASET_LOG` | *(unset or any other value)* | Disable dataset logging (default) |
 | `VOICE_UI_DATASET_DIR` | path string | Dataset root directory (default: `dataset`) |
+| `VOICE_UI_DATASET_EXTRA_NEGATIVES` | integer or `true` | After each **successful** grounded match, append up to *N* extra JSONL rows + crops for **other** candidates on the same frame (hard negatives for ranking / contrastive training). `true` → 6. `0` or unset → off. |
 
 PowerShell examples:
 
@@ -189,7 +190,16 @@ python main.py --mode all --input text
 
 $env:VOICE_UI_DATASET_LOG = "1"
 python main.py --mode all --input voice
+
+# Same utterance → many more rows per click (hard negatives; same frame_path, new crop files)
+$env:VOICE_UI_DATASET_LOG = "1"
+$env:VOICE_UI_DATASET_EXTRA_NEGATIVES = "10"
+python main.py --mode uia --input text
 ```
+
+### Hard negatives (optional, automatic)
+
+With **`VOICE_UI_DATASET_EXTRA_NEGATIVES`** set, each successful grounding still runs **`execute`** once, but **`events.jsonl`** gains additional lines tagged **`meta.label` = `"negative_hard"`** (`meta.pair_event_id` points at the positive row’s `event_id`). Each extra line gets its own **`dataset/crops/<uuid>.png`** for a non-chosen candidate bbox. No extra clicks—volume scales with how often you already use the agent.
 
 ### What gets written
 
@@ -214,6 +224,23 @@ Core fields include:
 - Logging is best-effort and isolated from execution; logger errors are swallowed so automation keeps running.
 - Default behavior is unchanged because logging is OFF unless explicitly enabled.
 - Dataset frame/crop use the **raw capture** (before **match/candidate** debug overlays). Debug snapshots may still be written under `test_screen_img/` by `perception/debug_draw.show_debug` for developer inspection.
+
+### Runtime toggles (text / dev mode only)
+
+With **`--input text`**, you can change dataset behaviour **without restarting** by typing into the floating bar (same place as normal commands). Lines starting with **`!dataset`** are handled first and are **not** sent to the command parser.
+
+| Command | Effect |
+|---------|--------|
+| `!dataset` or `!dataset status` | Print effective log on/off, extra-negative cap, and env values |
+| `!dataset on` / `off` | **Force** dataset logging on or off (overrides `VOICE_UI_DATASET_LOG`) |
+| `!dataset env` | Clear log override → follow **`VOICE_UI_DATASET_LOG`** again |
+| `!dataset negs 10` | **Force** extra hard-negative cap (same as env integer) |
+| `!dataset negs env` | Clear negs override → follow **`VOICE_UI_DATASET_EXTRA_NEGATIVES`** |
+| `!dataset envlog on` / `off` | Set `VOICE_UI_DATASET_LOG` in-process and clear override |
+| `!dataset envnegs 8` / `unset` | Set or remove `VOICE_UI_DATASET_EXTRA_NEGATIVES` in-process and clear override |
+| `!dataset reset` | Clear both overrides (everything follows env) |
+
+`dataset/data_logger.py` reads these effective values on **every** log call, so overrides apply immediately to the next action.
 
 ---
 
@@ -253,6 +280,7 @@ Use a **virtualenv**; keep `venv/` out of git (see `.gitignore`).
 | `VOICE_UI_UIA_USE_CLASSIC` | UIA | Classic `descendants` tree instead of on-screen walk |
 | `VOICE_UI_DATASET_LOG` | Dataset | Enable `events.jsonl` + frame/crop artifacts |
 | `VOICE_UI_DATASET_DIR` | Dataset | Root folder (default `dataset`) |
+| `VOICE_UI_DATASET_EXTRA_NEGATIVES` | Dataset | Max hard-negative rows per successful grounding (`true` → 6) |
 | `VOICE_UI_GRACE_SECONDS` | Voice | Pre‑execute cancel window when `--input voice` |
 | `VOICE_UI_WHISPER_MODEL` / `VOICE_UI_WHISPER_LANG` | Voice / STT | Whisper size and language |
 | `VOICE_UI_VAD_AGGRESSIVENESS` / `VOICE_UI_ENERGY_GATE` | Voice / VAD | WebRTC VAD level or energy fallback threshold |

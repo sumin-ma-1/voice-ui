@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -10,18 +11,24 @@ from typing import Any
 
 import cv2
 
+from dataset import runtime_overrides
+
 _LOCK = threading.Lock()
 _SESSION_ID: str | None = None
 
 
-def _is_true(value: str | None) -> bool:
-    if value is None:
-        return False
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
 def is_dataset_logging_enabled() -> bool:
-    return _is_true(os.getenv("VOICE_UI_DATASET_LOG"))
+    """Each call: ``runtime_overrides`` then ``VOICE_UI_DATASET_LOG`` (change at runtime in dev)."""
+    return runtime_overrides.effective_dataset_log()
+
+
+def extra_negatives_cap() -> int:
+    """
+    Max extra hard-negative crop rows per successful grounding (same utterance + frame).
+    ``VOICE_UI_DATASET_EXTRA_NEGATIVES=6`` or ``true`` (defaults to 6). ``0`` / unset = off.
+    Override via ``!dataset negs …`` in text dev mode.
+    """
+    return runtime_overrides.effective_extra_negatives_cap()
 
 
 def _utc_iso_now() -> str:
@@ -139,6 +146,88 @@ def prepare_grounding_artifacts(
         }
     )
     return artifacts
+
+
+def append_hard_negative_rows(
+    *,
+    parent_event_id: str,
+    frame_path: str | None,
+    raw_text: str,
+    action: str,
+    query: str | None,
+    mode_used: str,
+    frame: Any,
+    positive_bbox: tuple[int, int, int, int] | None,
+    candidates: list[dict[str, Any]],
+    positive_name: str | None,
+    max_extra: int,
+) -> None:
+    """
+    Append one JSONL row per non-chosen candidate crop (contrastive / ranking training).
+    Requires ``VOICE_UI_DATASET_LOG`` on; ``max_extra`` from :func:`extra_negatives_cap`.
+    """
+    if not is_dataset_logging_enabled() or max_extra <= 0:
+        return
+    if frame is None or not candidates:
+        return
+
+    def _norm_bbox(b: Any) -> tuple[int, int, int, int] | None:
+        t = _bbox_to_int_tuple(b)
+        return t
+
+    pos = _norm_bbox(positive_bbox)
+    pool: list[dict[str, Any]] = []
+    for el in candidates:
+        bb = _norm_bbox(el.get("bbox"))
+        if bb is None:
+            continue
+        if pos is not None and bb == pos:
+            continue
+        pool.append(el)
+    if not pool:
+        return
+    random.shuffle(pool)
+    pool = pool[:max_extra]
+
+    for el in pool:
+        bb = _norm_bbox(el.get("bbox"))
+        if bb is None:
+            continue
+        neg_id = str(uuid.uuid4())
+        crop = _crop_from_bbox(frame, bb)
+        if crop is None:
+            continue
+        crop_path = _dataset_root() / "crops" / f"{neg_id}.png"
+        if not _safe_imwrite(crop_path, crop):
+            continue
+        crop_rel = str(crop_path).replace("\\", "/")
+        event = {
+            "event_id": neg_id,
+            "ts": _utc_iso_now(),
+            "session_id": _get_session_id(),
+            "raw_text": raw_text,
+            "action": action,
+            "query": query,
+            "mode_used": mode_used,
+            "ok": None,
+            "reason": "negative_hard_sample",
+            "target": {
+                "name": el.get("name"),
+                "bbox": list(bb),
+                "center": el.get("center"),
+            },
+            "artifacts": {
+                "frame_path": frame_path,
+                "crop_path": crop_rel,
+            },
+            "meta": {
+                "label": "negative_hard",
+                "pair_event_id": parent_event_id,
+                "positive_name": positive_name,
+                "positive_bbox": list(pos) if pos else None,
+            },
+        }
+        _append_event(event)
 
 
 def log_execute_event(

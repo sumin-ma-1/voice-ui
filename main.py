@@ -8,6 +8,7 @@ import threading
 
 from agent.process_utterance import ensure_ocr_reader, process_utterance
 from com.office_controller import OfficeController
+from dataset.runtime_overrides import handle_dev_command
 from speech.floating_voice_widget import FloatingVoiceUI
 from speech.text_input_gui import TextInputGUI
 from speech.voice_session import VoiceSession
@@ -30,6 +31,9 @@ def main(mode: str, input_kind: str) -> None:
                 text = text_input.get_input()
 
                 if not text:
+                    continue
+
+                if handle_dev_command(text) == "handled":
                     continue
 
                 r = process_utterance(
@@ -67,8 +71,9 @@ def main(mode: str, input_kind: str) -> None:
             return
 
         voice_session.set_main_busy(False)
+        ui.set_mic_active(False)
         ui.set_led("idle")
-        ui.set_pipeline_guide('Say: "Hey Voice UI" — then your command.')
+        ui.set_pipeline_guide('Say: "Hey Voice UI", then ask your command.')
 
         try:
             while True:
@@ -113,6 +118,9 @@ def main(mode: str, input_kind: str) -> None:
         ),
         on_partial_line=lambda p: ui.root.after(
             0, lambda pp=p: ui.set_transcript_line(pp)
+        ),
+        on_mic_activity=lambda active: ui.root.after(
+            0, lambda a=active: ui.set_mic_active(a)
         ),
     )
 

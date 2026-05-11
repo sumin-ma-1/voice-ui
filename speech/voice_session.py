@@ -75,11 +75,13 @@ class VoiceSession:
         *,
         on_status: Callable[[str], None] | None = None,
         on_partial_line: Callable[[str], None] | None = None,
+        on_mic_activity: Callable[[bool], None] | None = None,
         model_size: str | None = None,
     ) -> None:
         self.out_queue = out_queue
         self._on_status = on_status
         self._on_partial = on_partial_line
+        self._on_mic_activity = on_mic_activity
 
         self._run = False
         self._thread: threading.Thread | None = None
@@ -101,6 +103,7 @@ class VoiceSession:
             self._status("WebRTC VAD unavailable (pip install webrtcvad). Using energy gate.")
 
         self._await_command = False
+        self._last_mic_activity = False
 
     def _status(self, msg: str) -> None:
         if self._on_status:
@@ -245,8 +248,25 @@ class VoiceSession:
                     in_speech = False
                     speech_frames = 0
                     silence_run = 0
+                    if self._last_mic_activity:
+                        self._last_mic_activity = False
+                        if self._on_mic_activity:
+                            try:
+                                self._on_mic_activity(False)
+                            except Exception:
+                                pass
                     time.sleep(0.01)
                     continue
+
+                # Mic “speaking” for UI: voice this frame while we accept audio (idle or grace).
+                mic_active = bool(is_voice)
+                if mic_active != self._last_mic_activity:
+                    self._last_mic_activity = mic_active
+                    if self._on_mic_activity:
+                        try:
+                            self._on_mic_activity(mic_active)
+                        except Exception:
+                            pass
 
                 if is_voice:
                     in_speech = True
