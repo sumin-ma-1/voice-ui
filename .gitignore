@@ -13,3 +13,9 @@ __pycache__/
 
 # test img
 test_screen_img/
+
+# Material Icons zip / export (large; local download only)
+training_data/icons_material/*.zip
+training_data/icons_material/material-design-icons-*/
+training_data/icons_material/images/
+training_data/icons_material/pairs.jsonl

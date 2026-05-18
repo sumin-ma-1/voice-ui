@@ -341,6 +341,7 @@ def process_utterance(
         command["_dataset_crop_path"] = artifacts.get("crop_path")
         command["_dataset_score"] = artifacts.get("score")
         command["_dataset_target_name"] = artifacts.get("target_name")
+        command["_dataset_is_icon"] = artifacts.get("is_icon")
         command["_mode_used"] = used_mode
 
         n_extra = extra_negatives_cap()
@@ -356,6 +357,7 @@ def process_utterance(
                 positive_bbox=match.get("bbox"),
                 candidates=filtered,
                 positive_name=match.get("name"),
+                positive_is_icon=bool(match.get("is_icon", False)),
                 max_extra=n_extra,
             )
 
