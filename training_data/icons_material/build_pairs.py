@@ -7,6 +7,9 @@ Does not require full zip extraction (avoids Windows long-path issues).
 
 Default filter: png/.../materialicons/24dp/1x/ (baseline filled, one size per icon).
 
+One JSONL row per icon. ``text`` is the target label only (no action verbs), aligned with
+grounding ``query`` after the command parser strips ``click`` / ``hover`` etc.
+
 Run from repo root:
   python training_data/icons_material/build_pairs.py
 """
@@ -35,13 +38,9 @@ def _human_name(icon_id: str) -> str:
     return icon_id.replace("_", " ").strip()
 
 
-def captions_for_icon(icon_id: str) -> list[str]:
-    human = _human_name(icon_id)
-    out: list[str] = []
-    for t in (icon_id, human, f"click {human}", f"press {human}", f"icon {human}"):
-        if t and t not in out:
-            out.append(t)
-    return out
+def target_query_for_icon(icon_id: str) -> str:
+    """Single grounding query string (Material id → spoken target name)."""
+    return _human_name(icon_id) or icon_id
 
 
 def find_zip_entries(zf: zipfile.ZipFile) -> dict[str, str]:
@@ -84,19 +83,19 @@ def export(
                 with zf.open(member) as src, open(image_path, "wb") as dst:
                     dst.write(src.read())
 
-            for text in captions_for_icon(icon_id):
-                row = {
-                    "image": str(rel_image).replace("\\", "/"),
-                    "text": text,
-                    "icon_id": icon_id,
-                    "source": "material_design_icons",
-                    "license": "Apache-2.0",
-                    "zip_member": member,
-                }
-                pair_rows += 1
-                if not dry_run:
-                    with pairs_path.open("a", encoding="utf-8") as f:
-                        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+            text = target_query_for_icon(icon_id)
+            row = {
+                "image": str(rel_image).replace("\\", "/"),
+                "text": text,
+                "icon_id": icon_id,
+                "source": "material_design_icons",
+                "license": "Apache-2.0",
+                "zip_member": member,
+            }
+            pair_rows += 1
+            if not dry_run:
+                with pairs_path.open("a", encoding="utf-8") as f:
+                    f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
         return len(entries), pair_rows
 
@@ -118,7 +117,7 @@ def main() -> None:
     )
 
     print(f"Icons: {n_icons}")
-    print(f"Pairs (image,text rows): {n_pairs}")
+    print(f"Pairs (1 row per icon): {n_pairs}")
     if not args.dry_run:
         print(f"Images: {IMAGES_DIR}")
         print(f"JSONL:  {PAIRS_PATH}")
