@@ -1,0 +1,8 @@
+[
+  {
+    "image": "test_screen_img_ocr/debug_view_20260422_093322_880415.png",
+    "query": "close",
+    "bbox": [0, 0, 0, 0],
+    "note": "Replace bbox with pixel coords [x1,y1,x2,y2] of the target icon (e.g. title-bar X). Use an image editor or debug overlay."
+  }
+]

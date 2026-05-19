@@ -19,3 +19,8 @@ training_data/icons_material/*.zip
 training_data/icons_material/material-design-icons-*/
 training_data/icons_material/images/
 training_data/icons_material/pairs.jsonl
+training_data/icons_material/previews/
+training_data/icons_material/checkpoints/
+training_data/icons_material/splits.json
+training_data/icons_material/eval_cases.json
+training_data/icons_material/eval_screenshots/
