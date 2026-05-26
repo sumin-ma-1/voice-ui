@@ -24,3 +24,4 @@ training_data/icons_material/checkpoints/
 training_data/icons_material/splits.json
 training_data/icons_material/eval_cases.json
 training_data/icons_material/eval_screenshots/
+training_data/icons_material/debug_yolo/

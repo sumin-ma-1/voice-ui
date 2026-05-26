@@ -284,3 +284,4 @@ Use a **virtualenv**; keep `venv/` out of git (see `.gitignore`).
 | `VOICE_UI_GRACE_SECONDS` | Voice | Pre‑execute cancel window when `--input voice` |
 | `VOICE_UI_WHISPER_MODEL` / `VOICE_UI_WHISPER_LANG` | Voice / STT | Whisper size and language |
 | `VOICE_UI_VAD_AGGRESSIVENESS` / `VOICE_UI_ENERGY_GATE` | Voice / VAD | WebRTC VAD level or energy fallback threshold |
+| `VOICE_UI_YOLO_IMGSZ` | Vision / YOLO | **`auto`** (default): scale inference from capture size (~long_edge/3, 640–1536). **`1280`**: fixed size. **`off`**: Ultralytics default 640 always. Helps small icons on large desktops. |

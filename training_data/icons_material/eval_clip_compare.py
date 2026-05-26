@@ -403,8 +403,19 @@ def main() -> None:
         help="Material records for gallery eval",
     )
     p.add_argument("--iou-threshold", type=float, default=0.5)
+    p.add_argument(
+        "--yolo-imgsz",
+        type=str,
+        default=None,
+        help="Set VOICE_UI_YOLO_IMGSZ for screen mode: auto (default), off, or e.g. 1280.",
+    )
     p.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
     args = p.parse_args()
+
+    if args.yolo_imgsz is not None:
+        import os
+
+        os.environ["VOICE_UI_YOLO_IMGSZ"] = args.yolo_imgsz.strip()
 
     device = torch.device(
         "cuda" if args.device == "cuda" and torch.cuda.is_available() else "cpu"
