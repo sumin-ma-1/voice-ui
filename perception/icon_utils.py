@@ -5,6 +5,7 @@
 # - OCR
 
 import os
+from pathlib import Path
 
 import torch
 import numpy as np
@@ -23,9 +24,45 @@ if is_gpu:
 else:
     print("[GPU] CUDA not found. Using CPU.")
 
-# CLIP
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _resolve_clip_checkpoint_path(raw: str) -> Path | None:
+    """Absolute path, or relative to cwd, then repo root."""
+    s = raw.strip()
+    if not s:
+        return None
+    p = Path(s)
+    candidates = [p.resolve()] if p.is_absolute() else [Path.cwd() / p, _REPO_ROOT / p]
+    for c in candidates:
+        if c.is_file():
+            return c.resolve()
+    return None
+
+
+# CLIP (optional fine-tuned weights from train_stage1.py)
 import clip
-clip_model, preprocess = clip.load("ViT-B/32", device=device)
+
+clip_model, preprocess = clip.load("ViT-B/32", device=device, jit=False)
+clip_model.float()
+clip_model.eval()
+
+_clip_ckpt_env = os.getenv("VOICE_UI_CLIP_CHECKPOINT", "").strip()
+_clip_ckpt_path = _resolve_clip_checkpoint_path(_clip_ckpt_env)
+if _clip_ckpt_path is not None:
+    try:
+        _sd = torch.load(
+            _clip_ckpt_path, map_location=device, weights_only=False
+        )
+    except TypeError:
+        _sd = torch.load(_clip_ckpt_path, map_location=device)
+    clip_model.load_state_dict(_sd["model_state_dict"], strict=True)
+    clip_model.eval()
+    print(f"[CLIP] loaded {_clip_ckpt_path.name} ({_clip_ckpt_path})")
+elif _clip_ckpt_env:
+    print(
+        f"[CLIP] VOICE_UI_CLIP_CHECKPOINT={_clip_ckpt_env!r} not found — using ViT-B/32 baseline"
+    )
 
 # YOLO (fine tuned model)
 yolo_model = YOLO("epoch235.pt")

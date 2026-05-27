@@ -261,7 +261,7 @@ voice-ui/
 └── pre/              # Prototypes — not imported by main.py
 ```
 
-Vision expects **`epoch235.pt`** (YOLO) in the working directory (or where Ultralytics resolves it).
+Vision expects **`epoch235.pt`** (YOLO) in the working directory (or where Ultralytics resolves it). Optional **CLIP** fine-tune: set **`VOICE_UI_CLIP_CHECKPOINT`** to a checkpoint from `training_data/icons_material/train_stage1.py` (e.g. `stage1_best.pt`) so icon matching uses tuned ViT-B/32 weights instead of the OpenAI baseline.
 
 ---
 
@@ -285,3 +285,4 @@ Use a **virtualenv**; keep `venv/` out of git (see `.gitignore`).
 | `VOICE_UI_WHISPER_MODEL` / `VOICE_UI_WHISPER_LANG` | Voice / STT | Whisper size and language |
 | `VOICE_UI_VAD_AGGRESSIVENESS` / `VOICE_UI_ENERGY_GATE` | Voice / VAD | WebRTC VAD level or energy fallback threshold |
 | `VOICE_UI_YOLO_IMGSZ` | Vision / YOLO | **`auto`** (default): scale inference from capture size (~long_edge/3, 640–1536). **`1280`**: fixed size. **`off`**: Ultralytics default 640 always. Helps small icons on large desktops. |
+| `VOICE_UI_CLIP_CHECKPOINT` | Vision / CLIP | Optional path to a ``train_stage1.py`` checkpoint (``stage1_best.pt``). Loads ViT-B/32 weights on top of OpenAI CLIP; unset = baseline. Tries absolute path, then cwd, then repo root. |
