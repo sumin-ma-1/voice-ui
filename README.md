@@ -242,6 +242,31 @@ With **`--input text`**, you can change dataset behaviour **without restarting**
 
 `dataset/data_logger.py` reads these effective values on **every** log call, so overrides apply immediately to the next action.
 
+### Automatic collection (whitelist, no real clicks)
+
+Use `tools/auto_collect_runner.py` with `configs/collect_targets.json` to auto-focus
+approved windows and log UIA icon-like probes into `dataset/events.jsonl` and
+`dataset/crops/` **without executing real clicks**.
+
+```powershell
+python tools/auto_collect_runner.py --config configs/collect_targets.json --force-enable-dataset-log
+```
+
+Notes:
+- Whitelist only trusted app/window title substrings in `configs/collect_targets.json`.
+- Default behavior is safe collection (synthetic `auto_collect_probe:*` events).
+- Add `--add-hard-negs` to also emit `negative_hard` rows for non-chosen candidates.
+
+### Nightly command (PowerShell Task Scheduler friendly)
+
+```powershell
+cd C:\Users\keti\Desktop\git-clone-repo\voice-ui
+$env:VOICE_UI_DATASET_LOG="1"
+$env:VOICE_UI_DATASET_EXTRA_NEGATIVES="6"
+venv\Scripts\python.exe tools/auto_collect_runner.py --config configs/collect_targets.json --add-hard-negs --force-enable-dataset-log
+venv\Scripts\python.exe training_data/icons_material/export_stage2_pairs.py
+```
+
 ---
 
 ## Layout (runtime)

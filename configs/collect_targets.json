@@ -1,0 +1,23 @@
+{
+  "description": "Whitelist of window title substrings for automatic dataset collection.",
+  "targets": [
+    {
+      "enabled": true,
+      "title_substring": "Chrome",
+      "fallback_queries": ["back", "refresh", "menu"],
+      "randomize_query": true
+    },
+    {
+      "enabled": true,
+      "title_substring": "Visual Studio Code",
+      "fallback_queries": ["search", "settings", "extensions"],
+      "randomize_query": true
+    },
+    {
+      "enabled": true,
+      "title_substring": "PowerPoint",
+      "fallback_queries": ["slideshow", "save", "new slide"],
+      "randomize_query": true
+    }
+  ]
+}
