@@ -342,6 +342,8 @@ def process_utterance(
         command["_dataset_score"] = artifacts.get("score")
         command["_dataset_target_name"] = artifacts.get("target_name")
         command["_dataset_is_icon"] = artifacts.get("is_icon")
+        command["_dataset_icon_like"] = artifacts.get("icon_like")
+        command["_dataset_control_type"] = artifacts.get("control_type")
         command["_mode_used"] = used_mode
 
         n_extra = extra_negatives_cap()
@@ -358,6 +360,7 @@ def process_utterance(
                 candidates=filtered,
                 positive_name=match.get("name"),
                 positive_is_icon=bool(match.get("is_icon", False)),
+                positive_icon_like=bool(match.get("icon_like", False)),
                 max_extra=n_extra,
             )
 

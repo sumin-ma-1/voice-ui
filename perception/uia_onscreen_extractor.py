@@ -29,6 +29,8 @@ from typing import Any, Optional
 
 from pywinauto import Application
 
+from perception.icon_like import uia_icon_like
+
 # Microsoft UI Automation property id (UIAutomationClient.h)
 UIA_IsOffscreenPropertyId = 30022
 
@@ -186,15 +188,17 @@ def extract_uia_elements(
 
                 mp = rect.mid_point()
                 cx, cy = int(mp.x), int(mp.y)
+                bbox = (rect.left, rect.top, rect.right, rect.bottom)
                 elements.append(
                     {
                         "name": name,
                         "control_type": control_type,
                         "parent_name": parent_name,
                         "parent_type": parent_type,
-                        "bbox": (rect.left, rect.top, rect.right, rect.bottom),
+                        "bbox": bbox,
                         "center": (cx, cy),
                         "is_icon": False,
+                        "icon_like": uia_icon_like(control_type, bbox, name),
                     }
                 )
             except Exception:

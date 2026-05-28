@@ -117,6 +117,7 @@ def prepare_grounding_artifacts(
     m = match or {}
     bbox = _bbox_to_int_tuple(m.get("bbox"))
     is_icon = bool(m.get("is_icon", False))
+    icon_like = bool(m.get("icon_like", False))
     frame_rel = None
     crop_rel = None
 
@@ -144,6 +145,8 @@ def prepare_grounding_artifacts(
             "bbox": list(bbox) if bbox is not None else None,
             "target_name": m.get("name"),
             "is_icon": is_icon,
+            "icon_like": icon_like,
+            "control_type": m.get("control_type"),
             "frame_path": frame_rel,
             "crop_path": crop_rel,
         }
@@ -164,14 +167,14 @@ def append_hard_negative_rows(
     candidates: list[dict[str, Any]],
     positive_name: str | None,
     positive_is_icon: bool | None,
+    positive_icon_like: bool | None = None,
     max_extra: int,
 ) -> None:
     """
     Append one JSONL row per non-chosen candidate crop (contrastive / ranking training).
     Requires ``VOICE_UI_DATASET_LOG`` on; ``max_extra`` from :func:`extra_negatives_cap`.
 
-    ``positive_is_icon`` is stored on each row's ``meta`` so icon-focused training can
-    filter hard negatives that pair with an icon positive.
+    ``positive_is_icon`` / ``positive_icon_like`` on ``meta`` for stage-2 export filters.
     """
     if not is_dataset_logging_enabled() or max_extra <= 0:
         return
@@ -223,6 +226,8 @@ def append_hard_negative_rows(
                 "bbox": list(bb),
                 "center": el.get("center"),
                 "is_icon": bool(el.get("is_icon", False)),
+                "icon_like": bool(el.get("icon_like", False)),
+                "control_type": el.get("control_type"),
             },
             "artifacts": {
                 "frame_path": frame_path,
@@ -233,6 +238,7 @@ def append_hard_negative_rows(
                 "pair_event_id": parent_event_id,
                 "positive_name": positive_name,
                 "positive_is_icon": positive_is_icon,
+                "positive_icon_like": positive_icon_like,
                 "positive_bbox": list(pos) if pos else None,
             },
         }
@@ -272,6 +278,13 @@ def log_execute_event(
                 if (element or {}).get("is_icon") is not None
                 else params.get("_dataset_is_icon")
             ),
+            "icon_like": (
+                (element or {}).get("icon_like")
+                if (element or {}).get("icon_like") is not None
+                else params.get("_dataset_icon_like")
+            ),
+            "control_type": (element or {}).get("control_type")
+            or params.get("_dataset_control_type"),
         },
         "artifacts": {
             "frame_path": params.get("_dataset_frame_path"),
