@@ -25,12 +25,17 @@ else:
     print("[GPU] CUDA not found. Using CPU.")
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
+_DEFAULT_CLIP_CHECKPOINT = (
+    _REPO_ROOT / "training_data/icons_material/checkpoints/stage1_best.pt"
+)
 
 
 def _resolve_clip_checkpoint_path(raw: str) -> Path | None:
     """Absolute path, or relative to cwd, then repo root."""
     s = raw.strip()
     if not s:
+        return None
+    if s.lower() in ("off", "baseline", "none"):
         return None
     p = Path(s)
     candidates = [p.resolve()] if p.is_absolute() else [Path.cwd() / p, _REPO_ROOT / p]
@@ -40,6 +45,22 @@ def _resolve_clip_checkpoint_path(raw: str) -> Path | None:
     return None
 
 
+def _clip_checkpoint_to_load() -> tuple[Path | None, str]:
+    """
+    Env ``VOICE_UI_CLIP_CHECKPOINT`` overrides default.
+    If unset, use ``training_data/icons_material/checkpoints/stage1_best.pt`` when present.
+  """
+    env_raw = os.getenv("VOICE_UI_CLIP_CHECKPOINT", "").strip()
+    if env_raw:
+        p = _resolve_clip_checkpoint_path(env_raw)
+        if p is not None:
+            return p, "env"
+        return None, "env_missing"
+    if _DEFAULT_CLIP_CHECKPOINT.is_file():
+        return _DEFAULT_CLIP_CHECKPOINT.resolve(), "default"
+    return None, "baseline"
+
+
 # CLIP (optional fine-tuned weights from train_stage1.py)
 import clip
 
@@ -47,8 +68,7 @@ clip_model, preprocess = clip.load("ViT-B/32", device=device, jit=False)
 clip_model.float()
 clip_model.eval()
 
-_clip_ckpt_env = os.getenv("VOICE_UI_CLIP_CHECKPOINT", "").strip()
-_clip_ckpt_path = _resolve_clip_checkpoint_path(_clip_ckpt_env)
+_clip_ckpt_path, _clip_ckpt_source = _clip_checkpoint_to_load()
 if _clip_ckpt_path is not None:
     try:
         _sd = torch.load(
@@ -58,11 +78,19 @@ if _clip_ckpt_path is not None:
         _sd = torch.load(_clip_ckpt_path, map_location=device)
     clip_model.load_state_dict(_sd["model_state_dict"], strict=True)
     clip_model.eval()
-    print(f"[CLIP] loaded {_clip_ckpt_path.name} ({_clip_ckpt_path})")
-elif _clip_ckpt_env:
+    if _clip_ckpt_source == "default":
+        print(
+            f"[CLIP] loaded {_clip_ckpt_path.name} (default: {_clip_ckpt_path.relative_to(_REPO_ROOT)})"
+        )
+    else:
+        print(f"[CLIP] loaded {_clip_ckpt_path.name} ({_clip_ckpt_path})")
+elif _clip_ckpt_source == "env_missing":
     print(
-        f"[CLIP] VOICE_UI_CLIP_CHECKPOINT={_clip_ckpt_env!r} not found — using ViT-B/32 baseline"
+        f"[CLIP] VOICE_UI_CLIP_CHECKPOINT={os.getenv('VOICE_UI_CLIP_CHECKPOINT', '')!r} "
+        "not found — using ViT-B/32 baseline"
     )
+else:
+    print("[CLIP] ViT-B/32 baseline (no stage1_best.pt at default path)")
 
 # YOLO (fine tuned model)
 yolo_model = YOLO("epoch235.pt")
