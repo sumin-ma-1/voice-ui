@@ -1,4 +1,4 @@
-# Voice UI — typed or spoken command → parse → Office, direct keys, or grounded UI action
+# Voice UI, typed or spoken command → parse → Office, direct keys, or grounded UI action
 
 Windows desktop loop: **text bar** (development default) or **hands‑free voice + floating UI** → structured command → Microsoft Office (COM), PyAutoGUI shortcuts, or **screen capture + element matching** (UIA, OCR, and/or vision).
 
@@ -15,7 +15,7 @@ flowchart TD
     end
 
     subgraph core [Shared pipeline]
-        PU[agent/process_utterance — parse + route + execute path]
+        PU[agent/process_utterance, parse + route + execute path]
     end
 
     subgraph route [Routing]
@@ -52,7 +52,7 @@ flowchart TD
 
 | Mode | Source |
 |------|--------|
-| `uia` | UIA on the active window — **default:** native on-screen walk (`IsOffscreen` + pruned DFS, `uia_onscreen_extractor`); optional classic `descendants` (see below) |
+| `uia` | UIA on the active window, **default:** native on-screen walk (`IsOffscreen` + pruned DFS, `uia_onscreen_extractor`); optional classic `descendants` (see below) |
 | `ocr` | Full-screen EasyOCR lines → element list |
 | `vision` | YOLO icons + EasyOCR on local crops (`icon_utils`) |
 | `both` | UIA first; if no confident match, fresh capture → vision |
@@ -86,10 +86,10 @@ Parsed `action` strings and how they are routed are defined in **`automation/act
 
 | Set | Role |
 |-----|------|
-| `OFFICE_ACTIONS` | COM path — `main` / demos use `is_office_action` → `OfficeController` |
-| `DIRECT_ACTIONS` | No UI grounding — straight to `automation/executor.py` (mostly PyAutoGUI; **`focus`** uses Win32 title match, see `automation/window_focus.py`) |
-| `GROUNDED_ACTIONS` | Needs a matched element — perception + `matcher` → then `executor` |
-| `UNKNOWN_ACTION` | No recognized phrase — `speech/command_parser.py` fallback |
+| `OFFICE_ACTIONS` | COM path, `main` / demos use `is_office_action` → `OfficeController` |
+| `DIRECT_ACTIONS` | No UI grounding, straight to `automation/executor.py` (mostly PyAutoGUI; **`focus`** uses Win32 title match, see `automation/window_focus.py`) |
+| `GROUNDED_ACTIONS` | Needs a matched element, perception + `matcher` → then `executor` |
+| `UNKNOWN_ACTION` | No recognized phrase, `speech/command_parser.py` fallback |
 | `POST_GROUNDING_CLICK_DELAY_ACTIONS` | After some grounded clicks, `main` / demos sleep briefly so UIs can open |
 
 `OfficeController` registers handlers whose keys must match `OFFICE_ACTIONS` at startup. `main.py` and `demos/ocr_grounded_agent_demo.py` import `DIRECT_ACTIONS`, `GROUNDED_ACTIONS`, `is_office_action`, etc., from the same module so routing lists do not drift.
@@ -110,7 +110,7 @@ Parsed `action` strings and how they are routed are defined in **`automation/act
 
 | Goal | Command |
 |------|---------|
-| **Development (text bar)** | `python main.py --mode uia` — same as `--input text` (default) |
+| **Development (text bar)** | `python main.py --mode uia`, same as `--input text` (default) |
 | **Hands‑free voice** | `python main.py --mode all --input voice` |
 | **Dataset collection on** | Set `VOICE_UI_DATASET_LOG=1` (see [Dataset Logging](#dataset-logging)) |
 
@@ -144,7 +144,7 @@ Hands‑free flow:
 1. Say **Hey Voice UI**, then your command in the **same utterance** or the **next** utterance. Parser input strips the wake phrase when present (`agent/process_utterance.py`).
 2. While the agent finds a UI target, the strip shows status text (“Finding target…”, etc.).
 3. After grounding, the matched region is **highlighted** briefly on screen (duration scales with grace length).
-4. **Grace window** (`VOICE_UI_GRACE_SECONDS`, default ~0.85s) — **only when `--input voice`**: say **stop** to cancel before automation runs, or **exit** to quit the app. **`--input text` has no extra grace delay** (immediate execute path after confirmations).
+4. **Grace window** (`VOICE_UI_GRACE_SECONDS`, default ~0.85s), **only when `--input voice`**: say **stop** to cancel before automation runs, or **exit** to quit the app. **`--input text` has no extra grace delay** (immediate execute path after confirmations).
 5. Optional **Confirm before run** checkbox: `tkinter` confirmation dialog before Office / direct / grounded execution.
 
 ### Voice stack
@@ -199,7 +199,7 @@ python main.py --mode uia --input text
 
 ### Hard negatives (optional, automatic)
 
-With **`VOICE_UI_DATASET_EXTRA_NEGATIVES`** set, each successful grounding still runs **`execute`** once, but **`events.jsonl`** gains additional lines tagged **`meta.label` = `"negative_hard"`** (`meta.pair_event_id` points at the positive row’s `event_id`). Each extra line gets its own **`dataset/crops/<uuid>.png`** for a non-chosen candidate bbox. No extra clicks—volume scales with how often you already use the agent.
+With **`VOICE_UI_DATASET_EXTRA_NEGATIVES`** set, each successful grounding still runs **`execute`** once, but **`events.jsonl`** gains additional lines tagged **`meta.label` = `"negative_hard"`** (`meta.pair_event_id` points at the positive row’s `event_id`). Each extra line gets its own **`dataset/crops/<uuid>.png`** for a non-chosen candidate bbox. No extra clicks, volume scales with how often you already use the agent.
 
 ### What gets written
 
