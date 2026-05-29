@@ -1,9 +1,67 @@
 {
   "description": "Whitelist of window title substrings for automatic dataset collection.",
+  "browser_defaults": {
+    "mode_for_browsers": "chrome_only",
+    "require_blank_tab_for_browsers": true,
+    "chrome_band_ratio": 0.16
+  },
+  "auto_launch": {
+    "enabled": false,
+    "launch_wait_ms": 12000,
+    "skip_if_window_open": true,
+    "presets": {
+      "Chrome": {
+        "launch": "chrome",
+        "launch_args": ["--new-window", "about:blank"]
+      },
+      "Edge": {
+        "launch": "edge",
+        "launch_args": ["--new-window", "about:blank"]
+      },
+      "Visual Studio Code": {
+        "launch": "vscode"
+      },
+      "PowerPoint": {
+        "launch": "powerpoint"
+      }
+    }
+  },
+  "browser_history": {
+    "enabled": false,
+    "browsers": ["chrome", "edge"],
+    "history_limit": 25,
+    "history_days": 14,
+    "page_load_ms": 3000,
+    "loops_per_page": 2,
+    "per_screen_cap": 6,
+    "one_per_domain": true,
+    "domain_allowlist": [],
+    "domain_blocklist": ["accounts.google.com", "login.live.com"],
+    "fallback_queries": ["menu", "search", "settings", "share"],
+    "randomize_query": true,
+    "browser_ui": {
+      "mode": "page_only",
+      "chrome_band_ratio": 0.16
+    }
+  },
   "targets": [
     {
       "enabled": true,
       "title_substring": "Chrome",
+      "browser_ui": {
+        "mode": "chrome_only",
+        "require_blank_tab": true
+      },
+      "fallback_queries": ["back", "refresh", "menu"],
+      "randomize_query": true
+    },
+    {
+      "enabled": true,
+      "title_substring": "Edge",
+      "browser_ui": {
+        "mode": "chrome_only",
+        "require_blank_tab": true
+      },
       "fallback_queries": ["back", "refresh", "menu"],
       "randomize_query": true
     },

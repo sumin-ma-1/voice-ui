@@ -337,6 +337,7 @@ def process_utterance(
     )
     if artifacts:
         command["_dataset_event_id"] = artifacts.get("event_id")
+        command["_dataset_frame_id"] = artifacts.get("frame_id")
         command["_dataset_frame_path"] = artifacts.get("frame_path")
         command["_dataset_crop_path"] = artifacts.get("crop_path")
         command["_dataset_score"] = artifacts.get("score")
@@ -351,6 +352,7 @@ def process_utterance(
             append_hard_negative_rows(
                 parent_event_id=str(artifacts["event_id"]),
                 frame_path=artifacts.get("frame_path"),
+                frame_id=artifacts.get("frame_id"),
                 raw_text=text,
                 action=action,
                 query=query,

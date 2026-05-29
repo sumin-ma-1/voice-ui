@@ -50,19 +50,11 @@ def _title_match_score(title: str, needle_lower: str) -> int:
     return 0
 
 
-def activate_window_by_title_substring(substring: str) -> str | None:
-    """
-    Find a visible top-level window whose title matches ``substring`` and bring it to the foreground.
-
-    Matching is case-insensitive. Multiple matches: best score wins (exact > prefix > contains),
-    then earliest in ``EnumWindows`` order (typically higher in Z-order).
-
-    Returns:
-        ``None`` on success, or a short error message on failure.
-    """
+def _find_window_by_title_substring(substring: str) -> tuple[int, str] | None:
+    """Return ``(hwnd, title)`` for the best visible top-level match, or ``None``."""
     needle = (substring or "").strip()
     if not needle:
-        return "focus needs text after the word focus, e.g. focus Chrome."
+        return None
 
     needle_lower = needle.lower()
     candidates: list[tuple[int, int, int, str]] = []  # (-score, index, hwnd, title)
@@ -96,14 +88,41 @@ def activate_window_by_title_substring(substring: str) -> str | None:
 
     try:
         win32gui.EnumWindows(_enum, None)
-    except Exception as e:
-        return f"Could not enumerate windows: {e}"
+    except Exception:
+        return None
 
     if not candidates:
-        return f"No visible window title matched {substring!r}. Try a shorter or different substring."
+        return None
 
     candidates.sort(key=lambda row: (row[0], row[1]))
     _neg_score, _idx, hwnd, chosen_title = candidates[0]
+    return hwnd, chosen_title
+
+
+def window_exists_by_title_substring(substring: str) -> bool:
+    """True if a visible top-level window title matches ``substring``."""
+    return _find_window_by_title_substring(substring) is not None
+
+
+def activate_window_by_title_substring(substring: str) -> str | None:
+    """
+    Find a visible top-level window whose title matches ``substring`` and bring it to the foreground.
+
+    Matching is case-insensitive. Multiple matches: best score wins (exact > prefix > contains),
+    then earliest in ``EnumWindows`` order (typically higher in Z-order).
+
+    Returns:
+        ``None`` on success, or a short error message on failure.
+    """
+    needle = (substring or "").strip()
+    if not needle:
+        return "focus needs text after the word focus, e.g. focus Chrome."
+
+    found = _find_window_by_title_substring(needle)
+    if not found:
+        return f"No visible window title matched {substring!r}. Try a shorter or different substring."
+
+    hwnd, chosen_title = found
     try:
         _bring_hwnd_to_foreground(hwnd)
     except Exception as e:

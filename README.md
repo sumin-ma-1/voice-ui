@@ -205,8 +205,9 @@ With **`VOICE_UI_DATASET_EXTRA_NEGATIVES`** set, each successful grounding still
 
 When enabled, the logger writes:
 
-- `dataset/events.jsonl`: one JSON line per `execute(...)` call
-- `dataset/frames/*.png`: full frame at grounded-action time
+- `dataset/events.jsonl`: one JSON line per `execute(...)` call (or per auto-collect probe)
+- `dataset/frames/*.png`: full frame at grounded-action time; **auto-collect** saves **one frame per UIA scan** (`artifacts.frame_id` shared by multiple crops from the same look)
+- `dataset/crops/*.png`: one crop per target bbox (unique `event_id` per row)
 - `dataset/crops/*.png`: crop from matched target `bbox` (when available)
 
 ### Event fields
@@ -256,6 +257,30 @@ Notes:
 - Whitelist only trusted app/window title substrings in `configs/collect_targets.json`.
 - Default behavior is safe collection (synthetic `auto_collect_probe:*` events).
 - Add `--add-hard-negs` to also emit `negative_hard` rows for non-chosen candidates.
+- **`--auto-launch`**: start Chrome / Edge / VS Code / PowerPoint (etc.) if not already open — see
+  `auto_launch.presets` in `configs/collect_targets.json`. UIA still needs a visible window
+  (not minimized). Per-target override: `"launch": "chrome"`, `"launch_args": ["--new-window"]`.
+
+**Browser chrome vs page UI:** Chrome/Edge whitelist targets default to `browser_ui.mode:
+chrome_only` (toolbar/window buttons on a blank/new tab only). History traversal defaults to
+`page_only` (skip reload/minimize/close duplicates on every site). Override per target in
+`configs/collect_targets.json`.
+
+**Browser history traversal (Chrome / Edge):** open recent local history URLs, wait for each
+page to load, then run the same UIA icon-like probe logging. Events include
+`meta.source_url`, `meta.page_title`, `meta.browser`, and `meta.domain`.
+
+```powershell
+# History only (no static targets)
+python tools/auto_collect_runner.py --from-history chrome --history-only --history-limit 15 --force-enable-dataset-log
+
+# Chrome + Edge, then also collect static whitelist windows
+python tools/auto_collect_runner.py --from-history both --force-enable-dataset-log
+```
+
+Or set `"browser_history": { "enabled": true, ... }` in `configs/collect_targets.json`.
+Domain filters: `domain_allowlist` / `domain_blocklist`. History is read from the local
+Chromium SQLite DB (copied while locked); only `http(s)` URLs are opened.
 
 ### Nightly command (PowerShell Task Scheduler friendly)
 
