@@ -260,6 +260,12 @@ Notes:
 - **`--auto-launch`**: start Chrome / Edge / VS Code / PowerPoint (etc.) if not already open — see
   `auto_launch.presets` in `configs/collect_targets.json`. UIA still needs a visible window
   (not minimized). Per-target override: `"launch": "chrome"`, `"launch_args": ["--new-window"]`.
+- **Maximize before scan** (default on): `collection.maximize_window` in config, or `--no-maximize`
+  to disable. Uses Windows maximize (work area), not exclusive fullscreen.
+- **Auto-discover installed apps**: `--auto-discover` or `auto_discover.enabled` in config scans
+  registry + Start Menu (Figma, Slack, …) and merges into targets with `launch` exe paths.
+  Preview: `python tools/discover_collect_targets.py`. Static `targets` in config take precedence
+  when titles overlap.
 
 **Browser chrome vs page UI:** Chrome/Edge whitelist targets default to `browser_ui.mode:
 chrome_only` (toolbar/window buttons on a blank/new tab only). History traversal defaults to

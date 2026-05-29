@@ -99,6 +99,7 @@ def filter_icon_candidates_for_browser_ui(
     mode: str,
     frame: Any,
     chrome_band_ratio: float = 0.16,
+    strict_top_band: bool = False,
 ) -> list[dict[str, Any]]:
     mode = normalize_browser_ui_mode(mode)
     if mode == "both" or not candidates:
@@ -118,11 +119,19 @@ def filter_icon_candidates_for_browser_ui(
             if is_browser_chrome_control(e, frame_h=h, chrome_band_ratio=chrome_band_ratio)
         ]
     # page_only
-    return [
+    out = [
         e
         for e in candidates
         if not is_browser_chrome_control(e, frame_h=h, chrome_band_ratio=chrome_band_ratio)
     ]
+    if strict_top_band:
+        # History pages: drop any icon_like still in the tab/toolbar band (repeats every URL).
+        out = [
+            e
+            for e in out
+            if not _bbox_in_chrome_band(e.get("bbox"), frame_h=h, chrome_band_ratio=chrome_band_ratio)
+        ]
+    return out
 
 
 def is_blank_browser_tab(window_title: str) -> bool:
@@ -159,22 +168,26 @@ def resolve_browser_ui_settings(
 
     mode = "both"
     require_blank = False
+    strict_top_band = False
+    dedupe_across_pages = False
 
     if history:
         hist = cfg.get("browser_history") if isinstance(cfg.get("browser_history"), dict) else {}
         bu = hist.get("browser_ui") if isinstance(hist.get("browser_ui"), dict) else {}
         mode = bu.get("mode", hist.get("ui_mode", "page_only"))
         ratio = float(bu.get("chrome_band_ratio", ratio))
+        strict_top_band = bool(bu.get("strict_top_band", True))
+        dedupe_across_pages = bool(bu.get("dedupe_across_pages", True))
     elif target:
         bu = target.get("browser_ui") if isinstance(target.get("browser_ui"), dict) else {}
         if bu:
             mode = bu.get("mode", mode)
             require_blank = bool(bu.get("require_blank_tab", False))
             ratio = float(bu.get("chrome_band_ratio", ratio))
+            strict_top_band = bool(bu.get("strict_top_band", False))
         else:
             title = str(target.get("title_substring") or "").lower()
             if "chrome" in title or "edge" in title:
-                # Sensible default for browser whitelist entries
                 mode = str(defaults.get("mode_for_browsers", "chrome_only"))
                 require_blank = bool(defaults.get("require_blank_tab_for_browsers", True))
 
@@ -182,4 +195,6 @@ def resolve_browser_ui_settings(
         "mode": normalize_browser_ui_mode(str(mode)),
         "require_blank_tab": require_blank,
         "chrome_band_ratio": ratio,
+        "strict_top_band": strict_top_band,
+        "dedupe_across_pages": dedupe_across_pages,
     }

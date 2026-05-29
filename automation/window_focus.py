@@ -37,6 +37,16 @@ def _bring_hwnd_to_foreground(hwnd: int) -> None:
             ctypes.windll.user32.AttachThreadInput(foreground_tid, current_tid, False)
 
 
+def _maximize_hwnd(hwnd: int) -> None:
+    if not hwnd or not win32gui.IsWindow(hwnd):
+        return
+    try:
+        win32gui.ShowWindow(hwnd, win32con.SW_MAXIMIZE)
+    except Exception:
+        pass
+    _bring_hwnd_to_foreground(hwnd)
+
+
 def _title_match_score(title: str, needle_lower: str) -> int:
     t = title.strip().lower()
     if not t:
@@ -104,12 +114,15 @@ def window_exists_by_title_substring(substring: str) -> bool:
     return _find_window_by_title_substring(substring) is not None
 
 
-def activate_window_by_title_substring(substring: str) -> str | None:
+def activate_window_by_title_substring(substring: str, *, maximize: bool = False) -> str | None:
     """
     Find a visible top-level window whose title matches ``substring`` and bring it to the foreground.
 
     Matching is case-insensitive. Multiple matches: best score wins (exact > prefix > contains),
     then earliest in ``EnumWindows`` order (typically higher in Z-order).
+
+    When ``maximize`` is True, sends ``SW_MAXIMIZE`` after activation (work-area fullscreen,
+    not exclusive fullscreen).
 
     Returns:
         ``None`` on success, or a short error message on failure.
@@ -125,6 +138,8 @@ def activate_window_by_title_substring(substring: str) -> str | None:
     hwnd, chosen_title = found
     try:
         _bring_hwnd_to_foreground(hwnd)
+        if maximize:
+            _maximize_hwnd(hwnd)
     except Exception as e:
         return f"Could not activate {chosen_title!r}: {e}"
 

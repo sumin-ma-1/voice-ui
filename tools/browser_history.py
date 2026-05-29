@@ -248,13 +248,22 @@ def browser_window_substring(browser: str) -> str:
     return browser
 
 
-def wait_for_page(browser: str, *, page_load_ms: int, expected_title_hint: str = "") -> str:
+def wait_for_page(
+    browser: str,
+    *,
+    page_load_ms: int,
+    expected_title_hint: str = "",
+    maximize: bool = False,
+    maximize_settle_ms: int = 400,
+) -> str:
     """Sleep for load, try to focus browser window, return foreground title."""
     from automation.window_focus import activate_window_by_title_substring
 
     time.sleep(max(0.2, page_load_ms / 1000.0))
     sub = browser_window_substring(browser)
-    activate_window_by_title_substring(sub)
+    activate_window_by_title_substring(sub, maximize=maximize)
+    if maximize:
+        time.sleep(max(0.05, maximize_settle_ms / 1000.0))
     time.sleep(0.25)
     title = foreground_window_title()
     if not title and expected_title_hint:

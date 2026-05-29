@@ -52,6 +52,7 @@ from dataset.data_logger import (
 from perception.screen_capture import capture_screen
 from perception.ui_fallback_pipeline import run_uia_stage
 from perception.ui_filter import filter_elements
+from tools.installed_apps import discover_targets
 from tools.app_launcher import ensure_app_for_target
 from tools.browser_history import (
     HistoryEntry,
@@ -78,6 +79,46 @@ def _normalize_query(s: str) -> str:
     q = (s or "").strip().lower()
     q = " ".join(q.split())
     return q
+
+
+def _probe_dedupe_key(element: dict[str, Any]) -> str:
+    """Stable key for skipping repeated UIA targets across history pages."""
+    name = _normalize_query(str(element.get("name") or ""))
+    ct = _normalize_query(str(element.get("control_type") or ""))
+    if name:
+        return f"n:{name}|ct:{ct}"
+    bbox = element.get("bbox")
+    try:
+        x1, y1, x2, y2 = bbox
+        cx = (int(x1) + int(x2)) // 2 // 48
+        cy = (int(y1) + int(y2)) // 2 // 48
+        return f"bb:{cx},{cy}|ct:{ct}"
+    except Exception:
+        return f"ct:{ct}|_"
+
+
+def _pick_candidates(
+    icon_candidates: list[dict[str, Any]],
+    *,
+    per_screen_cap: int,
+    rng: random.Random,
+) -> list[dict[str, Any]]:
+    """``per_screen_cap <= 0`` → all candidates (UIA order); else shuffle + cap."""
+    if per_screen_cap <= 0:
+        return list(icon_candidates)
+    rng.shuffle(icon_candidates)
+    return icon_candidates[: max(1, per_screen_cap)]
+
+
+def _resolve_per_screen_cap(args: argparse.Namespace, cfg: dict[str, Any], *, history: bool) -> int:
+    if history:
+        hist = cfg.get("browser_history") if isinstance(cfg.get("browser_history"), dict) else {}
+        if hist.get("per_screen_cap") is not None:
+            return int(hist["per_screen_cap"])
+    col = cfg.get("collection") if isinstance(cfg.get("collection"), dict) else {}
+    if col.get("per_screen_cap") is not None:
+        return int(col["per_screen_cap"])
+    return int(args.per_screen_cap)
 
 
 def _candidate_query(
@@ -119,6 +160,8 @@ def _collect_probes_on_current_screen(
     context_meta: dict[str, Any] | None = None,
     browser_ui_mode: str = "both",
     chrome_band_ratio: float = 0.16,
+    strict_top_band: bool = False,
+    dedupe_keys: set[str] | None = None,
 ) -> dict[str, int]:
     """Sample UIA icon-like elements on the currently focused window."""
     stats = {"probes_logged": 0, "candidates_seen": 0}
@@ -138,6 +181,7 @@ def _collect_probes_on_current_screen(
             mode=browser_ui_mode,
             frame=frame,
             chrome_band_ratio=chrome_band_ratio,
+            strict_top_band=strict_top_band,
         )
         stats["candidates_seen"] += len(icon_candidates)
         if not icon_candidates:
@@ -148,12 +192,17 @@ def _collect_probes_on_current_screen(
                 )
             continue
 
-        rng.shuffle(icon_candidates)
-        picks = icon_candidates[: max(1, per_screen_cap)]
+        picks = _pick_candidates(icon_candidates, per_screen_cap=per_screen_cap, rng=rng)
 
         shared_frame = None if dry_run else save_scan_frame(frame)
 
         for i, el in enumerate(picks):
+            if dedupe_keys is not None:
+                dkey = _probe_dedupe_key(el)
+                if dkey in dedupe_keys:
+                    continue
+                dedupe_keys.add(dkey)
+
             query = _candidate_query(
                 el,
                 fallback_queries=fallback_queries,
@@ -236,6 +285,60 @@ def _collect_probes_on_current_screen(
     return stats
 
 
+def _collection_settings(cfg: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    col = cfg.get("collection") if isinstance(cfg.get("collection"), dict) else {}
+    if args.no_maximize:
+        maximize = False
+    elif args.maximize:
+        maximize = True
+    else:
+        maximize = bool(col.get("maximize_window", True))
+    return {
+        "maximize_window": maximize,
+        "maximize_settle_ms": int(col.get("maximize_settle_ms", 400)),
+    }
+
+
+def _target_maximize(target: dict[str, Any], collection: dict[str, Any]) -> bool:
+    if "maximize" in target:
+        return bool(target.get("maximize"))
+    return bool(collection["maximize_window"])
+
+
+def _auto_discover_enabled(args: argparse.Namespace, cfg: dict[str, Any]) -> bool:
+    if args.auto_discover:
+        return True
+    ad = cfg.get("auto_discover") if isinstance(cfg.get("auto_discover"), dict) else {}
+    return bool(ad.get("enabled", False))
+
+
+def _merge_static_and_discovered_targets(
+    static: list[dict[str, Any]],
+    cfg: dict[str, Any],
+) -> list[dict[str, Any]]:
+    ad = cfg.get("auto_discover") if isinstance(cfg.get("auto_discover"), dict) else {}
+    max_apps = int(ad.get("max_apps", 30))
+    merge = bool(ad.get("merge_with_static_targets", True))
+
+    discovered = discover_targets(max_apps=max_apps)
+    if not merge:
+        return discovered
+
+    seen = {
+        str(t.get("title_substring") or "").strip().lower()
+        for t in static
+        if str(t.get("title_substring") or "").strip()
+    }
+    out = list(static)
+    for t in discovered:
+        key = str(t.get("title_substring") or "").strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(t)
+    return out
+
+
 def _auto_launch_settings(cfg: dict[str, Any]) -> dict[str, Any]:
     ac = cfg.get("auto_launch") or {}
     return {
@@ -266,6 +369,7 @@ def _collect_from_target(
     auto_launch: bool,
     launch_settings: dict[str, Any],
     cfg: dict[str, Any],
+    collection: dict[str, Any],
 ) -> dict[str, int]:
     """
     Collect probes from one target window definition.
@@ -310,12 +414,17 @@ def _collect_from_target(
         if not had_window and not dry_run:
             stats["apps_launched"] += 1
 
-    err = activate_window_by_title_substring(title)
+    err = activate_window_by_title_substring(
+        title,
+        maximize=_target_maximize(target, collection),
+    )
     if err:
         print(f"[skip] focus failed for {title!r}: {err}")
         return stats
 
     stats["windows_focused"] += 1
+    if _target_maximize(target, collection):
+        time.sleep(max(0.05, collection["maximize_settle_ms"] / 1000.0))
     time.sleep(max(0.05, dwell_ms / 1000.0))
 
     browser_ui = resolve_browser_ui_settings(target, cfg=cfg, history=False)
@@ -354,6 +463,7 @@ def _collect_from_target(
         },
         browser_ui_mode=browser_ui["mode"],
         chrome_band_ratio=browser_ui["chrome_band_ratio"],
+        strict_top_band=browser_ui["strict_top_band"],
     )
     stats["probes_logged"] += s["probes_logged"]
     stats["candidates_seen"] += s["candidates_seen"]
@@ -376,6 +486,8 @@ def _collect_from_history_entry(
     fallback_queries: list[str],
     randomize_query: bool,
     cfg: dict[str, Any],
+    collection: dict[str, Any],
+    history_dedupe_keys: set[str] | None = None,
 ) -> dict[str, int]:
     """Open one history URL in the browser and collect UIA probes on that page."""
     stats = {"windows_focused": 0, "probes_logged": 0, "candidates_seen": 0, "pages_visited": 0}
@@ -395,11 +507,13 @@ def _collect_from_history_entry(
         entry.browser,
         page_load_ms=page_load_ms,
         expected_title_hint=entry.title,
+        maximize=collection["maximize_window"],
+        maximize_settle_ms=collection["maximize_settle_ms"],
     )
     time.sleep(max(0.05, dwell_ms / 1000.0))
 
     title_sub = browser_window_substring(entry.browser)
-    err = activate_window_by_title_substring(title_sub)
+    err = activate_window_by_title_substring(title_sub, maximize=False)
     if err:
         print(f"[skip] browser focus failed after opening {entry.url!r}: {err}")
         return stats
@@ -414,6 +528,7 @@ def _collect_from_history_entry(
         "domain": entry.domain,
         "browser_ui_mode": browser_ui["mode"],
     }
+    dedupe_keys = history_dedupe_keys if browser_ui.get("dedupe_across_pages") else None
     s = _collect_probes_on_current_screen(
         title_label=label,
         run_id=run_id,
@@ -429,6 +544,8 @@ def _collect_from_history_entry(
         context_meta=context_meta,
         browser_ui_mode=browser_ui["mode"],
         chrome_band_ratio=browser_ui["chrome_band_ratio"],
+        strict_top_band=browser_ui["strict_top_band"],
+        dedupe_keys=dedupe_keys,
     )
     stats["probes_logged"] += s["probes_logged"]
     stats["candidates_seen"] += s["candidates_seen"]
@@ -454,6 +571,7 @@ def _run_history_collection(
     cfg: dict[str, Any],
     args: argparse.Namespace,
     run_id: str,
+    collection: dict[str, Any],
 ) -> dict[str, int]:
     hist_cfg = cfg.get("browser_history") or {}
     total = {"windows_focused": 0, "probes_logged": 0, "candidates_seen": 0, "pages_visited": 0}
@@ -466,8 +584,8 @@ def _run_history_collection(
     allow = hist_cfg.get("domain_allowlist") or []
     block = hist_cfg.get("domain_blocklist") or []
     one_per_domain = bool(hist_cfg.get("one_per_domain", True))
+    per_screen_cap = _resolve_per_screen_cap(args, cfg, history=True)
     loops = int(hist_cfg.get("loops_per_page", args.loops))
-    per_screen_cap = int(hist_cfg.get("per_screen_cap", args.per_screen_cap))
     fallback_queries = [
         _normalize_query(str(q))
         for q in (hist_cfg.get("fallback_queries") or ["menu", "search", "settings"])
@@ -503,6 +621,7 @@ def _run_history_collection(
         print("[history] no URLs to visit (empty history or all filtered)")
         return total
 
+    history_dedupe_keys: set[str] = set()
     print(f"[history] visiting {len(entries)} page(s)")
     for i, entry in enumerate(entries):
         print(f"[history] ({i + 1}/{len(entries)}) {entry.browser} {entry.domain} — {entry.url}")
@@ -521,6 +640,8 @@ def _run_history_collection(
             fallback_queries=fallback_queries,
             randomize_query=randomize_query,
             cfg=cfg,
+            collection=collection,
+            history_dedupe_keys=history_dedupe_keys,
         )
         for k in total:
             total[k] += s[k]
@@ -534,13 +655,13 @@ def main() -> None:
     p = argparse.ArgumentParser(description="Automatic UIA icon-like dataset collector.")
     p.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     p.add_argument("--run-id", type=str, default="")
-    p.add_argument("--loops", type=int, default=3, help="Screens to sample per target or history page.")
+    p.add_argument("--loops", type=int, default=1, help="Screens to sample per target or history page.")
     p.add_argument("--dwell-ms", type=int, default=700, help="Wait after focusing a window or page load.")
     p.add_argument(
         "--per-screen-cap",
         type=int,
-        default=6,
-        help="Max icon-like candidates to log from one screen sample.",
+        default=0,
+        help="Max icon-like candidates per scan (0 = all detected, no cap).",
     )
     p.add_argument("--sleep-between-samples-ms", type=int, default=120)
     p.add_argument(
@@ -600,6 +721,21 @@ def main() -> None:
         action="store_true",
         help="Start apps from launch/presets when no matching window is open.",
     )
+    p.add_argument(
+        "--maximize",
+        action="store_true",
+        help="Maximize each target window before scan (overrides config default).",
+    )
+    p.add_argument(
+        "--no-maximize",
+        action="store_true",
+        help="Do not maximize windows before scan.",
+    )
+    p.add_argument(
+        "--auto-discover",
+        action="store_true",
+        help="Add installed apps (registry/start menu) to collect targets.",
+    )
     args = p.parse_args()
 
     if not args.config.is_file():
@@ -614,9 +750,16 @@ def main() -> None:
         )
 
     cfg = _load_json(args.config)
-    targets = cfg.get("targets") or []
-    if not isinstance(targets, list):
+    static_targets = cfg.get("targets") or []
+    if not isinstance(static_targets, list):
         raise RuntimeError("Config targets must be a list.")
+
+    if _auto_discover_enabled(args, cfg):
+        targets = _merge_static_and_discovered_targets(static_targets, cfg)
+        n_disc = len(targets) - len(static_targets)
+        print(f"[auto-discover] merged {n_disc} installed app(s) ({len(targets)} targets total)")
+    else:
+        targets = static_targets
 
     history_browsers = _resolve_history_browsers(args, cfg)
     run_static = not args.history_only and bool(targets)
@@ -630,11 +773,13 @@ def main() -> None:
 
     auto_launch = _auto_launch_enabled(args, cfg)
     launch_settings = _auto_launch_settings(cfg)
+    collection = _collection_settings(cfg, args)
 
     run_id = args.run_id.strip() or time.strftime("%Y%m%d_%H%M%S")
     print(
         f"[auto-collect] run_id={run_id}  static_targets={len(targets) if run_static else 0}  "
-        f"history={history_browsers or 'off'}  auto_launch={auto_launch}  dry_run={args.dry_run}"
+        f"history={history_browsers or 'off'}  auto_launch={auto_launch}  "
+        f"maximize={collection['maximize_window']}  dry_run={args.dry_run}"
     )
 
     total = {
@@ -646,13 +791,14 @@ def main() -> None:
     }
 
     if run_static:
+        static_cap = _resolve_per_screen_cap(args, cfg, history=False)
         for t in targets:
             s = _collect_from_target(
                 t,
                 run_id=run_id,
                 loops=args.loops,
                 dwell_ms=args.dwell_ms,
-                per_screen_cap=args.per_screen_cap,
+                per_screen_cap=static_cap,
                 sleep_between_samples_ms=args.sleep_between_samples_ms,
                 score_value=args.score_value,
                 seed=args.seed,
@@ -661,12 +807,15 @@ def main() -> None:
                 auto_launch=auto_launch,
                 launch_settings=launch_settings,
                 cfg=cfg,
+                collection=collection,
             )
             for k in total:
                 total[k] += s[k]
 
     if run_history:
-        h = _run_history_collection(history_browsers, cfg=cfg, args=args, run_id=run_id)
+        h = _run_history_collection(
+            history_browsers, cfg=cfg, args=args, run_id=run_id, collection=collection
+        )
         for k in total:
             total[k] += h[k]
 

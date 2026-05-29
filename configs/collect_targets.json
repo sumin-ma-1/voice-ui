@@ -1,5 +1,15 @@
 {
   "description": "Whitelist of window title substrings for automatic dataset collection.",
+  "collection": {
+    "maximize_window": true,
+    "maximize_settle_ms": 400,
+    "per_screen_cap": 0
+  },
+  "auto_discover": {
+    "enabled": false,
+    "merge_with_static_targets": true,
+    "max_apps": 25
+  },
   "browser_defaults": {
     "mode_for_browsers": "chrome_only",
     "require_blank_tab_for_browsers": true,
@@ -32,8 +42,8 @@
     "history_limit": 25,
     "history_days": 14,
     "page_load_ms": 3000,
-    "loops_per_page": 2,
-    "per_screen_cap": 6,
+    "loops_per_page": 1,
+    "per_screen_cap": 0,
     "one_per_domain": true,
     "domain_allowlist": [],
     "domain_blocklist": ["accounts.google.com", "login.live.com"],
@@ -41,7 +51,9 @@
     "randomize_query": true,
     "browser_ui": {
       "mode": "page_only",
-      "chrome_band_ratio": 0.16
+      "chrome_band_ratio": 0.16,
+      "strict_top_band": true,
+      "dedupe_across_pages": true
     }
   },
   "targets": [
