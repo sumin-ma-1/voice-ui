@@ -25,3 +25,10 @@ training_data/icons_material/splits.json
 training_data/icons_material/eval_cases.json
 training_data/icons_material/eval_screenshots/
 training_data/icons_material/debug_yolo/
+
+# Dataset
+dataset/events.jsonl
+dataset/frames/
+dataset/crops/
+training_data/icons_material/pairs_stage2.jsonl
+training_data/icons_material/splits_stage2.json
