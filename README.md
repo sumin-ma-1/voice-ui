@@ -292,11 +292,20 @@ Chromium SQLite DB (copied while locked); only `http(s)` URLs are opened.
 
 ```powershell
 cd C:\Users\keti\Desktop\git-clone-repo\voice-ui
+powershell -ExecutionPolicy Bypass -File tools\collect_stage2_full.ps1
+```
+
+Or manually:
+
+```powershell
+cd C:\Users\keti\Desktop\git-clone-repo\voice-ui
 $env:VOICE_UI_DATASET_LOG="1"
 $env:VOICE_UI_DATASET_EXTRA_NEGATIVES="6"
-venv\Scripts\python.exe tools/auto_collect_runner.py --config configs/collect_targets.json --add-hard-negs --force-enable-dataset-log
+venv\Scripts\python.exe tools/auto_collect_runner.py --config configs/collect_targets.json --auto-launch --auto-discover --from-history both --history-limit 25 --page-load-ms 5000 --add-hard-negs --force-enable-dataset-log
 venv\Scripts\python.exe training_data/icons_material/export_stage2_pairs.py
 ```
+
+`tools/collect_stage2_full.ps1` runs the same pipeline (optional `-DryRun`, `-HistoryLimit 30`, `-NoDiscover`, `-NoHistory`, `-SkipExport`).
 
 ---
 
