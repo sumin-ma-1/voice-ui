@@ -28,6 +28,18 @@ training_data/icons_material/debug_yolo/
 
 # Dataset
 dataset/events.jsonl
+dataset/history_visited_domains.txt
+training_data/icons_material/pairs_stage2_en.jsonl
+training_data/icons_material/splits_stage2_en.json
+training_data/icons_material/pairs_stage2_en_hard_negatives.jsonl
+training_data/icons_material/checkpoints/stage2_en_*.pt
+training_data/icons_material/checkpoints/train_stage2_en.log
+training_data/icons_material/pairs_stage2_en_1pf.jsonl
+training_data/icons_material/splits_stage2_en_1pf.json
+training_data/icons_material/checkpoints/stage2_en_1pf_*.pt
+training_data/icons_material/checkpoints/train_stage2_en_1pf.log
+training_data/icons_material/checkpoints/stage2_en_hn_*.pt
+training_data/icons_material/checkpoints/train_stage2_en_hn.log
 dataset/frames/
 dataset/crops/
 training_data/icons_material/pairs_stage2.jsonl

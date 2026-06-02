@@ -14,6 +14,7 @@ Privacy / safety
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import sqlite3
@@ -109,21 +110,113 @@ def _blocked_url(url: str, *, blocklist: set[str]) -> bool:
     return False
 
 
+HISTORY_VISITED_FILENAME = "history_visited_domains.txt"
+
+
+def history_visited_domains_path(dataset_root: Path) -> Path:
+    return dataset_root / HISTORY_VISITED_FILENAME
+
+
+def load_history_visited_domains(path: Path) -> set[str]:
+    """Domains recorded when a history URL was opened (even if no probes were logged)."""
+    if not path.is_file():
+        return set()
+    out: set[str] = set()
+    for line in path.read_text(encoding="utf-8").splitlines():
+        d = line.split("#", 1)[0].strip().lower()
+        if d:
+            out.add(d)
+    return out
+
+
+def record_history_visited_domain(path: Path, domain: str) -> None:
+    """Append ``domain`` to the visited manifest (idempotent per line)."""
+    dom = (domain or "").strip().lower()
+    if not dom:
+        return
+    existing = load_history_visited_domains(path)
+    if dom in existing:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(dom + "\n")
+
+
+def load_history_skip_domains(
+    *,
+    events_path: Path,
+    visited_path: Path,
+    extra: set[str] | None = None,
+) -> set[str]:
+    """Union of domains to skip: logged probes + visited manifest + optional extras."""
+    out = domains_from_dataset_events(events_path)
+    out |= load_history_visited_domains(visited_path)
+    for d in extra or set():
+        s = str(d).strip().lower()
+        if s:
+            out.add(s)
+    return out
+
+
+def domains_from_dataset_events(events_path: Path) -> set[str]:
+    """
+    Domains already collected via browser_history (``meta.domain`` on ok probes).
+
+    Used to skip revisiting the same site when extending history collection.
+    """
+    if not events_path.is_file():
+        return set()
+    seen: set[str] = set()
+    for line in events_path.read_text(encoding="utf-8").splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        try:
+            o = json.loads(s)
+        except Exception:
+            continue
+        meta = o.get("meta") or {}
+        if meta.get("collect_mode") != "browser_history":
+            continue
+        if not o.get("ok"):
+            continue
+        dom = str(meta.get("domain") or "").strip().lower()
+        if dom:
+            seen.add(dom)
+            continue
+        url = str(meta.get("source_url") or "").strip()
+        if url:
+            d = _domain(url)
+            if d:
+                seen.add(d)
+    return seen
+
+
 def read_recent_history(
     browser: str,
     *,
-    limit: int = 30,
+    limit: int | None = 0,
     days: int | None = 30,
     domain_allowlist: list[str] | None = None,
     domain_blocklist: list[str] | None = None,
     one_per_domain: bool = True,
+    skip_domains: set[str] | None = None,
 ) -> list[HistoryEntry]:
     """
     Load recent history rows for one browser.
 
     ``one_per_domain``: keep only the newest URL per registrable domain so a
     browsing session visits many distinct sites instead of 30 GitHub tabs.
+
+    ``skip_domains``: do not return entries whose domain was already collected
+    (e.g. from ``domains_from_dataset_events``).
+
+    ``limit``: max entries to return; ``0`` or negative = no cap (still filtered by
+    ``days``, allow/block lists, and ``one_per_domain``).
     """
+    cap = limit is not None and int(limit) > 0
+    cap_n = int(limit) if cap else 0
+    skip = {d.strip().lower() for d in (skip_domains or set()) if d and str(d).strip()}
     db = history_db_path(browser)
     if db is None:
         print(f"[history] no History DB for {browser!r} (browser closed or not installed?)")
@@ -154,16 +247,29 @@ def read_recent_history(
             # Approx cutoff: now - days (Windows FILETIME-ish micros is messy; use relative ordering)
             # We fetch extra rows then filter in Python using monotonic ranking when days set.
             pass
-        rows = conn.execute(
-            """
-            SELECT url, title, visit_count, last_visit_time
-            FROM urls
-            WHERE hidden = 0
-            ORDER BY last_visit_time DESC
-            LIMIT ?
-            """,
-            (max(limit * 8, limit),),
-        ).fetchall()
+        if cap:
+            sql_limit = max(cap_n * 8, cap_n)
+            if skip:
+                sql_limit = max(sql_limit, cap_n + len(skip) * 4, 200)
+            rows = conn.execute(
+                """
+                SELECT url, title, visit_count, last_visit_time
+                FROM urls
+                WHERE hidden = 0
+                ORDER BY last_visit_time DESC
+                LIMIT ?
+                """,
+                (sql_limit,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT url, title, visit_count, last_visit_time
+                FROM urls
+                WHERE hidden = 0
+                ORDER BY last_visit_time DESC
+                """
+            ).fetchall()
         conn.close()
     except Exception as e:
         print(f"[history] failed to read {browser} DB: {e}")
@@ -193,6 +299,8 @@ def read_recent_history(
         lvt = int(r["last_visit_time"] or 0)
         if days and lvt < min_time_cutoff:
             continue
+        if skip and dom in skip:
+            continue
         if one_per_domain and dom in seen_domains:
             continue
         seen_domains.add(dom)
@@ -206,7 +314,7 @@ def read_recent_history(
                 domain=dom,
             )
         )
-        if len(out) >= limit:
+        if cap and len(out) >= cap_n:
             break
 
     return out

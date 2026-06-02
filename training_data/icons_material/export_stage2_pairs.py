@@ -41,6 +41,7 @@ import argparse
 import json
 import random
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -138,6 +139,7 @@ def export_stage2_pairs(
     train_ratio: float,
     val_ratio: float,
     min_score: float | None,
+    event_filter: Callable[[dict[str, Any]], bool] | None = None,
 ) -> None:
     if not events_path.is_file():
         raise FileNotFoundError(f"Missing events file: {events_path}")
@@ -156,9 +158,13 @@ def export_stage2_pairs(
         "missing_crop": 0,
         "not_icon_or_icon_like": 0,
         "below_min_score": 0,
+        "filtered_out": 0,
     }
 
     for e in events:
+        if event_filter is not None and not event_filter(e):
+            skip_stats["filtered_out"] += 1
+            continue
         mode_used = _norm_name(e.get("mode_used"))
         target = e.get("target") or {}
         artifacts = e.get("artifacts") or {}

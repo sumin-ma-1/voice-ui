@@ -57,6 +57,11 @@ from tools.app_launcher import ensure_app_for_target
 from tools.browser_history import (
     HistoryEntry,
     browser_window_substring,
+    domains_from_dataset_events,
+    history_visited_domains_path,
+    load_history_skip_domains,
+    load_history_visited_domains,
+    record_history_visited_domain,
     foreground_window_title,
     open_url_in_browser,
     read_recent_history,
@@ -69,6 +74,23 @@ from tools.browser_ui_filter import (
 )
 
 DEFAULT_CONFIG = REPO_ROOT / "configs/collect_targets.json"
+
+_STAT_KEYS = (
+    "windows_focused",
+    "probes_logged",
+    "candidates_seen",
+    "pages_visited",
+    "apps_launched",
+)
+
+
+def _empty_stats() -> dict[str, int]:
+    return {k: 0 for k in _STAT_KEYS}
+
+
+def _merge_stats(dst: dict[str, int], src: dict[str, int]) -> None:
+    for k in dst:
+        dst[k] += int(src.get(k, 0))
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -382,13 +404,7 @@ def _collect_from_target(
       - fallback_queries (optional list[str])
       - randomize_query (optional bool, default true)
     """
-    stats = {
-        "windows_focused": 0,
-        "probes_logged": 0,
-        "candidates_seen": 0,
-        "pages_visited": 0,
-        "apps_launched": 0,
-    }
+    stats = _empty_stats()
 
     if not bool(target.get("enabled", True)):
         return stats
@@ -490,7 +506,7 @@ def _collect_from_history_entry(
     history_dedupe_keys: set[str] | None = None,
 ) -> dict[str, int]:
     """Open one history URL in the browser and collect UIA probes on that page."""
-    stats = {"windows_focused": 0, "probes_logged": 0, "candidates_seen": 0, "pages_visited": 0}
+    stats = _empty_stats()
     label = f"{entry.browser}:{entry.domain}"
 
     if dry_run:
@@ -503,6 +519,11 @@ def _collect_from_history_entry(
         return stats
 
     stats["pages_visited"] += 1
+    if not dry_run:
+        record_history_visited_domain(
+            history_visited_domains_path(_dataset_root()),
+            entry.domain,
+        )
     page_title = wait_for_page(
         entry.browser,
         page_load_ms=page_load_ms,
@@ -565,6 +586,37 @@ def _resolve_history_browsers(args: argparse.Namespace, cfg: dict[str, Any]) -> 
     return []
 
 
+def _resolve_history_limit(args: argparse.Namespace, cfg: dict[str, Any]) -> int | None:
+    """Return max pages to visit, or None for no cap (``history_limit`` <= 0)."""
+    hist_cfg = cfg.get("browser_history") if isinstance(cfg.get("browser_history"), dict) else {}
+    if args.history_limit is not None:
+        v = int(args.history_limit)
+    else:
+        raw = hist_cfg.get("history_limit", 0)
+        v = int(raw) if raw is not None else 0
+    return None if v <= 0 else v
+
+
+def _history_skip_seen_domains(args: argparse.Namespace, cfg: dict[str, Any]) -> bool:
+    hist_cfg = cfg.get("browser_history") if isinstance(cfg.get("browser_history"), dict) else {}
+    if getattr(args, "no_history_skip_seen_domains", False):
+        return False
+    if getattr(args, "history_skip_seen_domains", False):
+        return True
+    return bool(hist_cfg.get("skip_seen_domains", True))
+
+
+def _dataset_root() -> Path:
+    root = Path(os.getenv("VOICE_UI_DATASET_DIR", "dataset"))
+    if not root.is_absolute():
+        root = (REPO_ROOT / root).resolve()
+    return root
+
+
+def _dataset_events_path() -> Path:
+    return _dataset_root() / "events.jsonl"
+
+
 def _run_history_collection(
     browsers: list[str],
     *,
@@ -574,9 +626,9 @@ def _run_history_collection(
     collection: dict[str, Any],
 ) -> dict[str, int]:
     hist_cfg = cfg.get("browser_history") or {}
-    total = {"windows_focused": 0, "probes_logged": 0, "candidates_seen": 0, "pages_visited": 0}
+    total = _empty_stats()
 
-    limit = args.history_limit if args.history_limit is not None else int(hist_cfg.get("history_limit", 25))
+    limit = _resolve_history_limit(args, cfg)
     days = args.history_days if args.history_days is not None else hist_cfg.get("history_days", 14)
     page_load_ms = (
         args.page_load_ms if args.page_load_ms is not None else int(hist_cfg.get("page_load_ms", 3000))
@@ -593,9 +645,39 @@ def _run_history_collection(
     ]
     randomize_query = bool(hist_cfg.get("randomize_query", True))
 
+    skip_seen_domains = _history_skip_seen_domains(args, cfg)
+    collected_domains: set[str] = set()
+    if skip_seen_domains:
+        events_path = _dataset_events_path()
+        visited_path = history_visited_domains_path(_dataset_root())
+        extra = {
+            str(d).strip().lower()
+            for d in (hist_cfg.get("skip_domains_extra") or [])
+            if str(d).strip()
+        }
+        n_events = len(domains_from_dataset_events(events_path))
+        n_manifest = len(load_history_visited_domains(visited_path))
+        collected_domains = load_history_skip_domains(
+            events_path=events_path,
+            visited_path=visited_path,
+            extra=extra,
+        )
+        if collected_domains:
+            print(
+                f"[history] skip_seen_domains: {len(collected_domains)} domain(s) "
+                f"(events={n_events}, {visited_path.name}={n_manifest}, extra={len(extra)})"
+            )
+
+    if limit is None:
+        print(
+            f"[history] no page limit (history_days={days!r}, skip_seen={skip_seen_domains})"
+        )
+    else:
+        print(f"[history] page limit={limit}")
+
     seen_urls: set[str] = set()
     entries: list[HistoryEntry] = []
-    per_browser = max(1, limit // max(1, len(browsers)))
+    per_browser = 0 if limit is None else max(1, limit // max(1, len(browsers)))
 
     for browser in browsers:
         rows = read_recent_history(
@@ -605,6 +687,7 @@ def _run_history_collection(
             domain_allowlist=allow if allow else None,
             domain_blocklist=block if block else None,
             one_per_domain=one_per_domain,
+            skip_domains=collected_domains if skip_seen_domains else None,
         )
         print(f"[history] {browser}: {len(rows)} URL(s) from local history")
         for row in rows:
@@ -612,9 +695,9 @@ def _run_history_collection(
                 continue
             seen_urls.add(row.url)
             entries.append(row)
-            if len(entries) >= limit:
+            if limit is not None and len(entries) >= limit:
                 break
-        if len(entries) >= limit:
+        if limit is not None and len(entries) >= limit:
             break
 
     if not entries:
@@ -643,8 +726,7 @@ def _run_history_collection(
             collection=collection,
             history_dedupe_keys=history_dedupe_keys,
         )
-        for k in total:
-            total[k] += s[k]
+        _merge_stats(total, s)
         if args.sleep_between_pages_ms > 0 and i + 1 < len(entries):
             time.sleep(args.sleep_between_pages_ms / 1000.0)
 
@@ -697,7 +779,22 @@ def main() -> None:
         action="store_true",
         help="Skip static config targets; only run browser history traversal.",
     )
-    p.add_argument("--history-limit", type=int, default=None, help="Max distinct history pages to visit.")
+    p.add_argument(
+        "--history-limit",
+        type=int,
+        default=None,
+        help="Max distinct history pages to visit (0 or omit with config 0 = no limit).",
+    )
+    p.add_argument(
+        "--history-skip-seen-domains",
+        action="store_true",
+        help="Skip domains already present in dataset/events.jsonl (browser_history rows).",
+    )
+    p.add_argument(
+        "--no-history-skip-seen-domains",
+        action="store_true",
+        help="Revisit domains even if already collected (default: skip when config skip_seen_domains is true).",
+    )
     p.add_argument(
         "--history-days",
         type=int,
@@ -782,13 +879,7 @@ def main() -> None:
         f"maximize={collection['maximize_window']}  dry_run={args.dry_run}"
     )
 
-    total = {
-        "windows_focused": 0,
-        "probes_logged": 0,
-        "candidates_seen": 0,
-        "pages_visited": 0,
-        "apps_launched": 0,
-    }
+    total = _empty_stats()
 
     if run_static:
         static_cap = _resolve_per_screen_cap(args, cfg, history=False)
@@ -809,15 +900,13 @@ def main() -> None:
                 cfg=cfg,
                 collection=collection,
             )
-            for k in total:
-                total[k] += s[k]
+            _merge_stats(total, s)
 
     if run_history:
         h = _run_history_collection(
             history_browsers, cfg=cfg, args=args, run_id=run_id, collection=collection
         )
-        for k in total:
-            total[k] += h[k]
+        _merge_stats(total, h)
 
     print(
         "[auto-collect] done: "

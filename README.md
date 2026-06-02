@@ -326,7 +326,19 @@ voice-ui/
 └── pre/              # Prototypes — not imported by main.py
 ```
 
-Vision expects **`epoch235.pt`** (YOLO) in the working directory (or where Ultralytics resolves it). **CLIP:** if `training_data/icons_material/checkpoints/stage1_best.pt` exists (after `train_stage1.py`), it loads automatically; override with **`VOICE_UI_CLIP_CHECKPOINT`** (set to `off` for OpenAI baseline only).
+Vision expects **`epoch235.pt`** (YOLO) in the working directory (or where Ultralytics resolves it). **CLIP:** if `training_data/icons_material/checkpoints/stage1_best.pt` exists (after `train_stage1.py`), it loads automatically; override with **`VOICE_UI_CLIP_CHECKPOINT`** (set to `off` for OpenAI baseline only). After stage-2 training, point runtime at `checkpoints/stage2_best.pt` the same way.
+
+### Stage-2 CLIP training (runtime crops)
+
+```powershell
+venv\Scripts\python.exe training_data/icons_material/export_stage2_pairs.py
+venv\Scripts\python.exe training_data/icons_material/train_stage2.py --epochs 10 --batch-size 32
+```
+
+- **Init:** `stage1_best.pt` (read-only; not overwritten).
+- **Output:** `checkpoints/stage2_best.pt`, `checkpoints/stage2_epoch*.pt`, log `train_stage2.log`.
+- **Runtime:** `$env:VOICE_UI_CLIP_CHECKPOINT="training_data/icons_material/checkpoints/stage2_best.pt"` before `main.py` / auto-collect.
+- **Experiment log:** checkpoint metrics, eval tables, and deployment notes — [`training_data/icons_material/EXPERIMENTS.md`](training_data/icons_material/EXPERIMENTS.md).
 
 ---
 

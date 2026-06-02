@@ -5,14 +5,14 @@
 #
 # Options:
 #   -DryRun          Preview targets only (no dataset writes)
-#   -HistoryLimit 30 Max history URLs (default 25)
+#   -HistoryLimit N   Cap history URLs (default 0 = no limit; uses config when omitted)
 #   -SkipExport      Do not run export_stage2_pairs.py
 #   -NoDiscover      Only config targets (no installed-app scan)
 #   -NoHistory       Skip browser history traversal
 
 param(
     [switch]$DryRun,
-    [int]$HistoryLimit = 25,
+    [int]$HistoryLimit = 0,
     [switch]$SkipExport,
     [switch]$NoDiscover,
     [switch]$NoHistory
@@ -36,9 +36,12 @@ $collectArgs = @(
     "--auto-launch",
     "--add-hard-negs",
     "--force-enable-dataset-log",
-    "--page-load-ms", "5000",
-    "--history-limit", "$HistoryLimit"
+    "--page-load-ms", "5000"
 )
+
+if ($HistoryLimit -gt 0) {
+    $collectArgs += "--history-limit", "$HistoryLimit"
+}
 
 if (-not $NoDiscover) {
     $collectArgs += "--auto-discover"
