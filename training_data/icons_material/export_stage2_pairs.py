@@ -44,7 +44,13 @@ from pathlib import Path
 from collections.abc import Callable
 from typing import Any
 
+import sys
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from speech.target_text import refine_clip_query_text
 DEFAULT_EVENTS = REPO_ROOT / "dataset/events.jsonl"
 DEFAULT_OUT = REPO_ROOT / "training_data/icons_material/pairs_stage2.jsonl"
 DEFAULT_SPLITS = REPO_ROOT / "training_data/icons_material/splits_stage2.json"
@@ -140,6 +146,7 @@ def export_stage2_pairs(
     val_ratio: float,
     min_score: float | None,
     event_filter: Callable[[dict[str, Any]], bool] | None = None,
+    refine_query: bool = True,
 ) -> None:
     if not events_path.is_file():
         raise FileNotFoundError(f"Missing events file: {events_path}")
@@ -169,10 +176,18 @@ def export_stage2_pairs(
         target = e.get("target") or {}
         artifacts = e.get("artifacts") or {}
         meta = e.get("meta") or {}
-        query = _norm_text(e.get("query"))
+        raw_query = _norm_text(e.get("query"))
         crop_rel = _norm_text(artifacts.get("crop_path"))
         target_name = _norm_text(target.get("name") or meta.get("target_name"))
         control_type = _norm_text(target.get("control_type"))
+        if refine_query:
+            query = refine_clip_query_text(
+                raw_query,
+                target_name=target_name,
+                control_type=control_type,
+            )
+        else:
+            query = raw_query
 
         # Backward compatibility:
         # Old logs may omit target.is_icon. Vision winners are icon candidates.
@@ -190,6 +205,7 @@ def export_stage2_pairs(
                         {
                             "image": str(crop_abs.relative_to(REPO_ROOT)).replace("\\", "/"),
                             "text": query,
+                            "raw_query": raw_query,
                             "icon_id": f"neg::{e.get('event_id', 'unknown')}",
                             "source": "dataset_hard_negative",
                             "event_id": e.get("event_id"),
@@ -238,6 +254,7 @@ def export_stage2_pairs(
                 # train_stage1.py reads these three keys.
                 "image": str(crop_abs.relative_to(REPO_ROOT)).replace("\\", "/"),
                 "text": query,
+                "raw_query": raw_query,
                 "icon_id": f"{group_id}::{event_id}",
                 # Extra metadata for audit/debug/export iterations.
                 "source": "dataset_runtime",

@@ -223,6 +223,30 @@ Stage-2 full fine-tune은 Material/eval에서 Stage-1을 깎는 경우가 반복
 
 공식 흐름: collect → `export_stage2_pairs.py` → `train_stage2.py`
 
+### 데스크톱 앱 수집 (Office · 한글)
+
+`configs/collect_targets.json` — Word, Excel, PowerPoint, Outlook, 한글/HWP, VS Code (`Chrome`/`Edge`는 `enabled: false`).
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\collect_stage2_desktop.ps1
+```
+
+브라우저 히스토리 없음 → export 기본은 **EN-only** (`pairs_stage2_en.jsonl`). 전체 export: `-FullExport`.
+
+### CLIP `text` 정제 (실사용 target)
+
+UIA 접근성 문자열 → **음성 target**(action 제외 remainder)에 맞추기:
+
+| 위치 | 모듈 |
+|------|------|
+| 수집 | `tools/auto_collect_runner.py` → `speech/target_text.refine_clip_query_text` |
+| export | `export_stage2_pairs.py` → `text` (정제), `raw_query` (원문) |
+| 런타임 음성 | `agent/process_utterance.py` → `refine_parsed_voice_query` |
+| CLIP 임베딩 | `perception/icon_utils.get_text_embedding` |
+
+규칙 예: `닫기`→`close`, `이 항목을 목록에 고정`→`pin`, `(alt+f)` 제거, 사이트명(논현일보)은 **유지**.  
+정제 후 **재-export·재학습** 필요 (`pairs_stage2.jsonl` 갱신).
+
 ---
 
 ## Eval 재현
@@ -238,6 +262,50 @@ venv\Scripts\python.exe training_data/icons_material/eval_clip_compare.py `
 ```
 
 Split R@1/R@5 재측정은 `train_stage2.py`의 `recall_at_k` + 각 `pairs_*.jsonl` / `splits_*.json` 사용.
+
+---
+
+## Stage-2 LoRA (EN raw, 정제 전)
+
+**가설:** full FT는 Stage-1을 망가뜨려 screen eval ↓. LoRA + UIA 원문 라벨로 실화면 적응만 얹기.
+
+| 단계 | 명령 / 설정 |
+|------|--------------|
+| Export | `python training_data/icons_material/export_stage2_en_raw_experiment.py` → `pairs_stage2_en_raw.jsonl`, `splits_stage2_en_raw.json` |
+| Train | `python training_data/icons_material/train_stage2_lora_experiment.py --epochs 12 --batch-size 32 --lr 1e-4`  |
+| Eval | `python training_data/icons_material/eval_clip_compare.py --mode all --checkpoint training_data/icons_material/checkpoints/stage2_en_lora_best.pt` |
+
+- `text` = `refine_clip_query_text` **미적용** (Hangul 행은 EN export에서 제외).
+- 런타임은 여전히 `refine_clip_query_text` / `refine_parsed_voice_query` 사용 → train/serve gap 있음.
+- LoRA: visual+text `attn.out_proj`, `mlp.c_fc`, `mlp.c_proj` (rank 8, lr `1e-4` 기본).
+
+**best checkpoint:** `stage2_en_lora_best.pt` (epoch 10)  
+**split (stage2_lora train loop):** val_R@1 **28.26%**, test_R@1 **41.86%**
+
+**eval_clip_compare.py (mode=all, 10 labeled screen cases):**
+- Material gallery: r1 **0.2583**, r5 **0.5563**
+- Screen YOLO+CLIP: top1 **0.2222**, top5 **0.6667** (detected 9/10)
+- Screen oracle GT crops: r1 **0.5000**, r5 **0.8000**
+
+### Refined label variant (EN refined `text`)
+
+- Train command:
+  `python training_data/icons_material/train_stage2_lora_experiment.py --pairs training_data/icons_material/pairs_stage2_en.jsonl --splits training_data/icons_material/splits_stage2_en.json --best-checkpoint stage2_en_refined_lora_best.pt --epoch-prefix stage2_en_refined_lora_epoch --log-file train_stage2_en_refined_lora.log --epochs 12 --batch-size 32 --lr 1e-4`
+- Best checkpoint: `stage2_en_refined_lora_best.pt` (val_R@1 **0.3250**, test_R@1 **0.5862**)
+- Eval (`--mode all`):
+  - Material gallery: r1 **0.2583**, r5 **0.5629**
+  - Screen YOLO+CLIP: top1 **0.1111**, top5 **0.7778**
+  - Screen oracle GT crops: r1 **0.6000**, r5 **0.9000**
+
+### Refined label + Visual-only LoRA (`text tower` 고정)
+
+- Train command:
+  `python training_data/icons_material/train_stage2_lora_experiment.py --pairs training_data/icons_material/pairs_stage2_en.jsonl --splits training_data/icons_material/splits_stage2_en.json --best-checkpoint stage2_en_refined_lora_visual_only_best.pt --epoch-prefix stage2_en_refined_lora_visual_only_epoch --log-file train_stage2_en_refined_lora_visual_only.log --visual-only --epochs 12 --batch-size 32 --lr 1e-4`
+- Training note: 저장 중 디스크 write error로 epoch 9에서 중단. best 파일은 정상 저장/로딩 확인 (`epoch 8`, `val_R@1=0.3000`, `test_R@1=0.5517`).
+- Eval (separate runs):
+  - Material gallery: r1 **0.1854**, r5 **0.3841**
+  - Screen oracle GT crops: r1 **0.5000**, r5 **0.9000**
+  - Screen YOLO+CLIP: top1 **0.1111**, top5 **0.2222** (detected 9/10)
 
 ---
 

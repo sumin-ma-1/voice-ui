@@ -41,6 +41,7 @@ from perception.ui_fallback_pipeline import (
     run_vision_icon_stage,
 )
 from speech.command_parser import parse_command
+from speech.target_text import refine_parsed_voice_query
 from speech.voice_session import contains_wake_phrase, strip_wake_phrase
 
 if TYPE_CHECKING:
@@ -213,7 +214,7 @@ def process_utterance(
 
     # --- UI-grounded ---
     frame = capture_screen()
-    query = command.get("query", parse_source)
+    query = refine_parsed_voice_query(command.get("query", parse_source) or "")
 
     match = None
     score = 0.0

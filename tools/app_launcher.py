@@ -20,8 +20,12 @@ from automation.window_focus import window_exists_by_title_substring
 _TITLE_LAUNCH_HINTS: tuple[tuple[str, str], ...] = (
     ("visual studio code", "vscode"),
     ("powerpoint", "powerpoint"),
+    ("outlook", "outlook"),
     ("word", "word"),
     ("excel", "excel"),
+    ("한글", "hwp"),
+    ("hwp", "hwp"),
+    ("hancom", "hwp"),
     ("chrome", "chrome"),
     ("edge", "edge"),
 )
@@ -41,7 +45,8 @@ def resolve_executable(spec: str) -> Path | None:
     """
     Resolve ``spec`` to an executable path.
 
-    ``spec`` may be a full path, or an alias: chrome, edge, vscode, powerpoint, word, excel.
+    ``spec`` may be a full path, or an alias: chrome, edge, vscode, powerpoint, word,
+    excel, outlook, hwp (Hancom Hangul / Hangle).
     """
     raw = (spec or "").strip()
     if not raw:
@@ -91,10 +96,45 @@ def resolve_executable(spec: str) -> Path | None:
             pf / "Microsoft Office/root/Office16/EXCEL.EXE",
             pf / "Microsoft Office/Office16/EXCEL.EXE",
         ]
+    elif alias == "outlook":
+        candidates = [
+            pf / "Microsoft Office/root/Office16/OUTLOOK.EXE",
+            pf86 / "Microsoft Office/root/Office16/OUTLOOK.EXE",
+            pf / "Microsoft Office/Office16/OUTLOOK.EXE",
+        ]
+    elif alias in ("hwp", "hangle", "hancom"):
+        candidates = [
+            pf / "Hancom/Hancom Office/HOffice130/BBin/Hwp.exe",
+            pf / "Hancom/Hancom Office/HOffice120/BBin/Hwp.exe",
+            pf86 / "Hancom/Hancom Office/HOffice120/BBin/Hwp.exe",
+            pf86 / "Hancom/HOffice 2022/HOffice120/BBin/Hwp.exe",
+            pf86 / "Hancom/Office 2020/HOffice110/Bin/Hwp.exe",
+            pf / "Hancom/HOffice 2022/HOffice120/BBin/Hwp.exe",
+        ]
+        found = _find_hwp_exe()
+        if found is not None:
+            return found
 
     for c in candidates:
         if c.is_file():
             return c
+    return None
+
+
+def _find_hwp_exe() -> Path | None:
+    """Best-effort Hancom Hangul (Hwp.exe) when standard paths differ by version."""
+    roots: list[Path] = []
+    pf, pf86 = _program_files()
+    roots.extend([pf / "Hancom", pf86 / "Hancom"])
+    for base in roots:
+        if not base.is_dir():
+            continue
+        try:
+            for p in base.rglob("Hwp.exe"):
+                if p.is_file():
+                    return p.resolve()
+        except OSError:
+            continue
     return None
 
 

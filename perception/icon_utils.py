@@ -231,8 +231,12 @@ def detect_icons(image, *, imgsz: int | None = None):
 
 # ---- EMBEDDINGS ----
 def get_text_embedding(text):
+    from speech.target_text import refine_clip_query_text
 
-    tokens = clip.tokenize([text]).to(device)
+    t = refine_clip_query_text(text)
+    if not t:
+        t = str(text or "").strip() or " "
+    tokens = clip.tokenize([t]).to(device)
 
     with torch.no_grad():
         emb = clip_model.encode_text(tokens)

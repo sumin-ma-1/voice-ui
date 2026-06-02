@@ -17,7 +17,7 @@
   },
   "auto_launch": {
     "enabled": false,
-    "launch_wait_ms": 12000,
+    "launch_wait_ms": 18000,
     "skip_if_window_open": true,
     "presets": {
       "Chrome": {
@@ -31,8 +31,20 @@
       "Visual Studio Code": {
         "launch": "vscode"
       },
+      "Word": {
+        "launch": "word"
+      },
+      "Excel": {
+        "launch": "excel"
+      },
       "PowerPoint": {
         "launch": "powerpoint"
+      },
+      "Outlook": {
+        "launch": "outlook"
+      },
+      "한글": {
+        "launch": "hwp"
       }
     }
   },
@@ -61,6 +73,48 @@
   "targets": [
     {
       "enabled": true,
+      "title_substring": "Word",
+      "fallback_queries": ["save", "undo", "bold", "file", "home"],
+      "randomize_query": true
+    },
+    {
+      "enabled": true,
+      "title_substring": "Excel",
+      "fallback_queries": ["save", "undo", "insert", "home", "format"],
+      "randomize_query": true
+    },
+    {
+      "enabled": true,
+      "title_substring": "PowerPoint",
+      "fallback_queries": ["slideshow", "save", "insert", "design", "home"],
+      "randomize_query": true
+    },
+    {
+      "enabled": true,
+      "title_substring": "Outlook",
+      "fallback_queries": ["send", "reply", "delete", "calendar", "search"],
+      "randomize_query": true
+    },
+    {
+      "enabled": true,
+      "title_substring": "한글",
+      "fallback_queries": ["save", "file", "insert", "view", "help"],
+      "randomize_query": true
+    },
+    {
+      "enabled": true,
+      "title_substring": "HWP",
+      "fallback_queries": ["save", "file", "insert", "view", "help"],
+      "randomize_query": true
+    },
+    {
+      "enabled": true,
+      "title_substring": "Visual Studio Code",
+      "fallback_queries": ["search", "settings", "extensions", "run", "debug"],
+      "randomize_query": true
+    },
+    {
+      "enabled": false,
       "title_substring": "Chrome",
       "browser_ui": {
         "mode": "chrome_only",
@@ -70,25 +124,13 @@
       "randomize_query": true
     },
     {
-      "enabled": true,
+      "enabled": false,
       "title_substring": "Edge",
       "browser_ui": {
         "mode": "chrome_only",
         "require_blank_tab": true
       },
       "fallback_queries": ["back", "refresh", "menu"],
-      "randomize_query": true
-    },
-    {
-      "enabled": true,
-      "title_substring": "Visual Studio Code",
-      "fallback_queries": ["search", "settings", "extensions"],
-      "randomize_query": true
-    },
-    {
-      "enabled": true,
-      "title_substring": "PowerPoint",
-      "fallback_queries": ["slideshow", "save", "new slide"],
       "randomize_query": true
     }
   ]

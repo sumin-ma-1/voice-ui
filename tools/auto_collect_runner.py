@@ -72,6 +72,7 @@ from tools.browser_ui_filter import (
     is_blank_browser_tab,
     resolve_browser_ui_settings,
 )
+from speech.target_text import refine_clip_query_text
 
 DEFAULT_CONFIG = REPO_ROOT / "configs/collect_targets.json"
 
@@ -160,7 +161,7 @@ def _candidate_query(
     """
     name_q = _normalize_query(str(element.get("name") or ""))
     if name_q:
-        return name_q
+        return refine_clip_query_text(name_q)
     if fallback_queries:
         return rng.choice(fallback_queries) if randomize else fallback_queries[0]
     return ""
