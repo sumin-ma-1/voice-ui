@@ -135,6 +135,42 @@ Exit phrases (typed or spoken after wake): `exit`, `quit`, `stop agent`, `shutdo
 
 ---
 
+## Share / Deploy Quick Start (Windows)
+
+If you want another person to run this project as-is, share the repo directory with `venv` excluded (recommended), then run the following on their machine:
+
+```powershell
+cd <voice-ui-repo>
+py -3.12 -m venv venv
+.\venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+Set the runtime checkpoint explicitly (recommended for stable behavior):
+
+```powershell
+$env:VOICE_UI_CLIP_CHECKPOINT = "training_data/icons_material/checkpoints/stage1_best.pt"
+```
+
+Run commands:
+
+```powershell
+# typed input (safer for first run)
+python main.py --mode all --input text
+
+# hands-free voice
+python main.py --mode all --input voice
+```
+
+Notes:
+
+- `stage1_best.pt` is the recommended default runtime model in this repository.
+- `VOICE_UI_DATASET_LOG` is off by default; enable it only if you want to collect training data.
+- On fresh Windows machines, microphone permission and COM-related Office setup may need one-time user approval.
+
+---
+
 ## Voice UI (floating overlay)
 
 **Modules:** `speech/floating_voice_widget.py` (LED state, transcript line, pipeline guide, **Confirm before run** toggle), `speech/voice_session.py` (mic → VAD → Whisper → wake phrase gate → command queue), `perception/grounding_highlight.py` (full‑screen highlight ring before execute when a Tk parent exists).
