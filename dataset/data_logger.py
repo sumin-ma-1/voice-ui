@@ -123,6 +123,7 @@ def prepare_grounding_artifacts(
     score: float | int | None,
     frame: Any,
     shared_frame: dict[str, str] | None = None,
+    event_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Save optional frame/crop artifacts and return metadata to attach into command params.
@@ -135,7 +136,7 @@ def prepare_grounding_artifacts(
     if not is_dataset_logging_enabled():
         return {}
 
-    event_id = str(uuid.uuid4())
+    event_id = event_id or str(uuid.uuid4())
     artifacts: dict[str, Any] = {"event_id": event_id}
 
     m = match or {}
@@ -275,6 +276,77 @@ def append_hard_negative_rows(
         _append_event(event)
 
 
+def log_study_utterance(
+    *,
+    recorder: Any,
+    outcome: str,
+    action: str | None = None,
+    query: str | None = None,
+    mode_used: str | None = None,
+    ok: bool | None = None,
+    reason: str | None = None,
+    element: dict[str, Any] | None = None,
+    artifacts: dict[str, Any] | None = None,
+    match_score: float | None = None,
+) -> str:
+    """
+    Append one study/dataset row for any utterance outcome (success, fail, cancel, …).
+
+    Returns ``event_id`` (for rating prompts).
+    """
+    if not is_dataset_logging_enabled():
+        return recorder.event_id
+
+    from dataset.study_context import route_for_action
+
+    bbox = _bbox_to_int_tuple((element or {}).get("bbox"))
+    art = artifacts or {}
+    study = recorder.build_study_block(
+        outcome=outcome,
+        route=route_for_action(action),
+        ok=ok,
+        reason=reason,
+        action=action,
+        query=query,
+        mode_used=mode_used,
+        match_score=match_score,
+        element=element,
+    )
+
+    event = {
+        "event_id": recorder.event_id,
+        "ts": _utc_iso_now(),
+        "session_id": _get_session_id(),
+        "raw_text": recorder.raw_text,
+        "action": action,
+        "query": query,
+        "mode_used": mode_used,
+        "ok": ok if ok is not None else False,
+        "reason": reason,
+        "target": {
+            "name": (element or {}).get("name"),
+            "bbox": list(bbox) if bbox is not None else None,
+            "center": (element or {}).get("center"),
+            "is_icon": (element or {}).get("is_icon"),
+            "icon_like": (element or {}).get("icon_like"),
+            "control_type": (element or {}).get("control_type"),
+        },
+        "artifacts": {
+            "frame_id": art.get("frame_id"),
+            "frame_path": art.get("frame_path"),
+            "crop_path": art.get("crop_path"),
+        },
+        "meta": {
+            "score": match_score,
+            "target_name": (element or {}).get("name"),
+            "study": study,
+        },
+        "study": study,
+    }
+    _append_event(event)
+    return recorder.event_id
+
+
 def log_execute_event(
     *,
     action: str,
@@ -284,6 +356,27 @@ def log_execute_event(
     reason: str | None,
 ) -> None:
     if not is_dataset_logging_enabled():
+        return
+
+    recorder = params.get("_study_recorder")
+    if recorder is not None:
+        outcome = "success" if ok else "exec_fail"
+        log_study_utterance(
+            recorder=recorder,
+            outcome=outcome,
+            action=action,
+            query=params.get("query"),
+            mode_used=params.get("_mode_used"),
+            ok=bool(ok),
+            reason=reason,
+            element=element,
+            artifacts={
+                "frame_id": params.get("_dataset_frame_id"),
+                "frame_path": params.get("_dataset_frame_path"),
+                "crop_path": params.get("_dataset_crop_path"),
+            },
+            match_score=params.get("_dataset_score"),
+        )
         return
 
     event_id = params.get("_dataset_event_id") or str(uuid.uuid4())

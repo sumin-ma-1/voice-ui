@@ -3,18 +3,25 @@
 # Input: --input text (default, dev) | voice (wake phrase + floating UI)
 
 import argparse
+import os
 import queue
 import threading
 
 from agent.process_utterance import ensure_ocr_reader, process_utterance
 from com.office_controller import OfficeController
 from dataset.runtime_overrides import handle_dev_command
+from dataset.study_context import ensure_study_manifest, is_study_mode
 from speech.floating_voice_widget import FloatingVoiceUI
 from speech.text_input_gui import TextInputGUI
 from speech.voice_session import VoiceSession
 
 
 def main(mode: str, input_kind: str) -> None:
+
+    os.environ["VOICE_UI_INPUT_MODE"] = input_kind
+    if is_study_mode():
+        os.environ.setdefault("VOICE_UI_DATASET_LOG", "1")
+        ensure_study_manifest(mode=mode, input_kind=input_kind)
 
     office = OfficeController()
 

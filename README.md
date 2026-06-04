@@ -171,6 +171,45 @@ Notes:
 
 ---
 
+## User study (3 participants)
+
+For controlled evaluation (latency, surface type, success rate, optional 1–5 ratings), use the study launcher:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\run_study.ps1 -Participant U1 -Input voice -Ratings
+powershell -ExecutionPolicy Bypass -File tools\run_study.ps1 -Participant U2 -Input voice -Ratings
+powershell -ExecutionPolicy Bypass -File tools\run_study.ps1 -Participant U3 -Input text
+```
+
+Each participant writes to a separate folder:
+
+| File | Contents |
+|------|----------|
+| `dataset_U1/events.jsonl` | One JSON line per utterance (success, fail, cancel, no-match, parse-fail, office) |
+| `dataset_U1/study_manifest.json` | PC specs (CPU/RAM/GPU), session id, mode |
+| `dataset_U1/study_ratings.jsonl` | Optional 1–5 satisfaction scores (`-Ratings`) |
+
+Key fields on each event (`study` block):
+
+- `participant_id`, `utterance_index`, `outcome`, `route` (`office` / `direct` / `grounded`)
+- `surface`: `native_app` (Word, Excel, …) vs `web_in_browser` (Chrome/Edge pages such as YouTube, shopping)
+- `grounding_path`: `uia` / `ocr` / `vision` (vision uses GPU when CUDA is available)
+- `latency_ms`: `total`, `capture`, `uia`, `ocr`, `vision`, `execute`
+- `target_meta`: whether UIA name / bbox / control_type was present
+
+Environment variables (manual setup without the script):
+
+```powershell
+$env:VOICE_UI_STUDY = "1"
+$env:VOICE_UI_STUDY_USER = "U1"
+$env:VOICE_UI_DATASET_LOG = "1"
+$env:VOICE_UI_DATASET_DIR = "dataset_U1"
+$env:VOICE_UI_STUDY_RATINGS = "1"   # optional 1–5 popup after success
+python main.py --mode all --input voice
+```
+
+---
+
 ## Voice UI (floating overlay)
 
 **Modules:** `speech/floating_voice_widget.py` (LED state, transcript line, pipeline guide, **Confirm before run** toggle), `speech/voice_session.py` (mic → VAD → Whisper → wake phrase gate → command queue), `perception/grounding_highlight.py` (full‑screen highlight ring before execute when a Tk parent exists).

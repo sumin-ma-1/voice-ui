@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import time
+from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any
 
 from automation.action_space import (
@@ -18,8 +19,11 @@ from com.office_controller import OfficeController
 from dataset.data_logger import (
     append_hard_negative_rows,
     extra_negatives_cap,
+    log_study_utterance,
     prepare_grounding_artifacts,
 )
+from dataset.study_context import StudyRecorder, maybe_start_recorder
+from dataset.study_rating import prompt_study_rating
 from grounding.matcher import find_best_match
 from perception.debug_draw import draw_elements, draw_match, show_debug
 from perception.grounding_cascade import (
@@ -117,6 +121,46 @@ def _confirm(ui: Any | None, title: str, message: str) -> bool:
     return ui.confirm_run(title, message)
 
 
+def _log_study(
+    recorder: StudyRecorder | None,
+    *,
+    outcome: str,
+    action: str | None = None,
+    query: str | None = None,
+    mode_used: str | None = None,
+    ok: bool | None = None,
+    reason: str | None = None,
+    element: dict[str, Any] | None = None,
+    artifacts: dict[str, Any] | None = None,
+    match_score: float | None = None,
+    ui: Any | None = None,
+    prompt_rating: bool = False,
+) -> None:
+    if recorder is None:
+        return
+    event_id = log_study_utterance(
+        recorder=recorder,
+        outcome=outcome,
+        action=action,
+        query=query,
+        mode_used=mode_used,
+        ok=ok,
+        reason=reason,
+        element=element,
+        artifacts=artifacts,
+        match_score=match_score,
+    )
+    if prompt_rating and outcome in {"success", "office_ok"}:
+        from dataset.study_context import get_participant_id
+
+        prompt_study_rating(
+            event_id,
+            participant_id=get_participant_id(),
+            utterance_index=None,
+            ui_root=getattr(ui, "root", None) if ui is not None else None,
+        )
+
+
 def process_utterance(
     text: str,
     *,
@@ -149,6 +193,8 @@ def process_utterance(
     if start_timer:
         print("Timer starts.")
 
+    study = maybe_start_recorder(text, mode_requested=mode)
+
     parse_source = (text or "").strip()
     if contains_wake_phrase(parse_source.lower()):
         stripped = strip_wake_phrase(parse_source)
@@ -170,6 +216,15 @@ def process_utterance(
             "Could not parse that as a known command. "
             "Try examples: click Save, type hello, copy, open word, scroll down."
         )
+        _log_study(
+            study,
+            outcome="parse_fail",
+            action=action,
+            query=command.get("query"),
+            mode_used=mode,
+            ok=False,
+            reason="unknown_action",
+        )
         return "continue"
 
     grace_sec = float(os.getenv("VOICE_UI_GRACE_SECONDS", "0.85"))
@@ -183,14 +238,44 @@ def process_utterance(
             return "exit"
         if g == "stop":
             print("Cancelled before Office run.")
+            _log_study(
+                study,
+                outcome="cancelled_grace",
+                action=action,
+                query=command.get("query"),
+                mode_used=mode,
+                ok=False,
+                reason="grace_stop",
+            )
             return "continue"
         if not _confirm(ui, "Confirm Office action", f"Run Office command?\n{command}"):
             print("Cancelled.")
+            _log_study(
+                study,
+                outcome="cancelled_confirm",
+                action=action,
+                query=command.get("query"),
+                mode_used=mode,
+                ok=False,
+                reason="confirm_cancel",
+            )
             return "continue"
-        success = office.execute(command)
+        with study.time_block("execute") if study else nullcontext():
+            success = office.execute(command)
         print(f"Execution time: {time.time() - start_time:.4f} sec")
         if not success:
             print("Office command failed")
+        _log_study(
+            study,
+            outcome="office_ok" if success else "office_fail",
+            action=action,
+            query=command.get("query"),
+            mode_used=mode,
+            ok=bool(success),
+            reason=None if success else "office_execute_failed",
+            ui=ui,
+            prompt_rating=bool(success),
+        )
         return "continue"
 
     if action in DIRECT_ACTIONS:
@@ -202,18 +287,51 @@ def process_utterance(
             return "exit"
         if g == "stop":
             print("Cancelled before direct action.")
+            _log_study(
+                study,
+                outcome="cancelled_grace",
+                action=action,
+                query=command.get("query"),
+                mode_used=mode,
+                ok=False,
+                reason="grace_stop",
+            )
             return "continue"
         if not _confirm(ui, "Confirm action", f"Run {action}?"):
             print("Cancelled.")
+            _log_study(
+                study,
+                outcome="cancelled_confirm",
+                action=action,
+                query=command.get("query"),
+                mode_used=mode,
+                ok=False,
+                reason="confirm_cancel",
+            )
             return "continue"
+        if study:
+            study.attach_to_command(command)
         result = execute(action, element=None, params=command)
         if not result.ok:
             print(result.reason)
         print(f"Execution time: {time.time() - start_time:.4f} sec")
+        if study is None:
+            pass
+        elif result.ok:
+            from dataset.study_context import get_participant_id
+
+            prompt_study_rating(
+                study.event_id,
+                participant_id=get_participant_id(),
+                utterance_index=None,
+                ui_root=getattr(ui, "root", None) if ui is not None else None,
+            )
         return "continue"
 
     # --- UI-grounded ---
-    frame = capture_screen()
+    capture_ctx = study.time_block("capture") if study else nullcontext()
+    with capture_ctx:
+        frame = capture_screen()
     query = refine_parsed_voice_query(command.get("query", parse_source) or "")
 
     match = None
@@ -224,80 +342,92 @@ def process_utterance(
     if mode == "all":
         if ui is not None:
             ui.set_pipeline_guide("Finding target: UIA…")
-        match, score, used_mode, frame = run_uia_match_step(
-            frame,
-            query,
-            uia_threshold=SCORE_THRESHOLD[STAGE_UIA],
-            heading="\n[STEP 1] Try UIA",
-            no_match_fallback_message=(
-                "[UIA] No confident match → fallback to full-frame OCR"
-            ),
-            used_mode_on_miss=mode,
-        )
+        with study.time_block("uia") if study else nullcontext():
+            match, score, used_mode, frame = run_uia_match_step(
+                frame,
+                query,
+                uia_threshold=SCORE_THRESHOLD[STAGE_UIA],
+                heading="\n[STEP 1] Try UIA",
+                no_match_fallback_message=(
+                    "[UIA] No confident match → fallback to full-frame OCR"
+                ),
+                used_mode_on_miss=mode,
+            )
         if match is None:
             if ui is not None:
                 ui.set_pipeline_guide("Finding target: OCR…")
-            match, score, used_mode, frame = run_ocr_match_step(
+            with study.time_block("ocr") if study else nullcontext():
+                match, score, used_mode, frame = run_ocr_match_step(
+                    frame,
+                    query,
+                    ocr_reader,
+                    ocr_threshold=SCORE_THRESHOLD[STAGE_OCR],
+                    heading="\n[STEP 2] Try full-frame OCR",
+                    no_match_fallback_message=(
+                        "[OCR] No confident match → fallback to vision (icons + local OCR)"
+                    ),
+                    used_mode_on_miss=mode,
+                )
+        if match is None:
+            if ui is not None:
+                ui.set_pipeline_guide("Finding target: vision (YOLO)…")
+            with study.time_block("vision") if study else nullcontext():
+                match, score, used_mode, frame = run_vision_match_step(
+                    frame,
+                    query,
+                    vision_threshold=SCORE_THRESHOLD[STAGE_VISION],
+                    heading="\n[STEP 3] Try vision (YOLO + localized OCR)",
+                    used_mode_on_miss=mode,
+                )
+
+    elif mode == "both":
+        if ui is not None:
+            ui.set_pipeline_guide("Finding target: UIA…")
+        with study.time_block("uia") if study else nullcontext():
+            match, score, used_mode, frame = run_uia_match_step(
                 frame,
                 query,
-                ocr_reader,
-                ocr_threshold=SCORE_THRESHOLD[STAGE_OCR],
-                heading="\n[STEP 2] Try full-frame OCR",
+                uia_threshold=SCORE_THRESHOLD[STAGE_UIA],
+                heading="\n[STEP 1] Try UIA",
                 no_match_fallback_message=(
-                    "[OCR] No confident match → fallback to vision (icons + local OCR)"
+                    "[UIA] No confident match → fallback to vision (YOLO + localized OCR)"
                 ),
                 used_mode_on_miss=mode,
             )
         if match is None:
             if ui is not None:
                 ui.set_pipeline_guide("Finding target: vision (YOLO)…")
-            match, score, used_mode, frame = run_vision_match_step(
-                frame,
-                query,
-                vision_threshold=SCORE_THRESHOLD[STAGE_VISION],
-                heading="\n[STEP 3] Try vision (YOLO + localized OCR)",
-                used_mode_on_miss=mode,
-            )
-
-    elif mode == "both":
-        if ui is not None:
-            ui.set_pipeline_guide("Finding target: UIA…")
-        match, score, used_mode, frame = run_uia_match_step(
-            frame,
-            query,
-            uia_threshold=SCORE_THRESHOLD[STAGE_UIA],
-            heading="\n[STEP 1] Try UIA",
-            no_match_fallback_message=(
-                "[UIA] No confident match → fallback to vision (YOLO + localized OCR)"
-            ),
-            used_mode_on_miss=mode,
-        )
-        if match is None:
-            if ui is not None:
-                ui.set_pipeline_guide("Finding target: vision (YOLO)…")
-            match, score, used_mode, frame = run_vision_match_step(
-                frame,
-                query,
-                vision_threshold=SCORE_THRESHOLD[STAGE_VISION],
-                heading="\n[STEP 2] Try vision (YOLO + localized OCR)",
-                used_mode_on_miss=mode,
-            )
+            with study.time_block("vision") if study else nullcontext():
+                match, score, used_mode, frame = run_vision_match_step(
+                    frame,
+                    query,
+                    vision_threshold=SCORE_THRESHOLD[STAGE_VISION],
+                    heading="\n[STEP 2] Try vision (YOLO + localized OCR)",
+                    used_mode_on_miss=mode,
+                )
 
     elif mode == "ocr":
-        ocr_elements = run_fullframe_ocr_stage(frame, ocr_reader, conf_min=0.35)
+        with study.time_block("ocr") if study else nullcontext():
+            ocr_elements = run_fullframe_ocr_stage(frame, ocr_reader, conf_min=0.35)
         filtered = filter_elements(ocr_elements)
         print(f"[ocr] {len(ocr_elements)} lines → {len(filtered)} after filter")
         if ui is not None:
             ui.set_pipeline_guide("Matching text (OCR)…")
-        match, score = find_best_match(query, filtered, screen=frame)
+        with study.time_block("match") if study else nullcontext():
+            match, score = find_best_match(query, filtered, screen=frame)
+        used_mode = "ocr"
 
     elif mode in ("uia", "vision"):
-        elements = extract_elements_by_mode(mode)
+        stage_key = mode
+        with study.time_block(stage_key) if study else nullcontext():
+            elements = extract_elements_by_mode(mode)
         filtered = filter_elements(elements)
         print(f"[{mode}] {len(elements)} → {len(filtered)}")
         if ui is not None:
             ui.set_pipeline_guide(f"Matching ({mode})…")
-        match, score = find_best_match(query, filtered, screen=frame)
+        with study.time_block("match") if study else nullcontext():
+            match, score = find_best_match(query, filtered, screen=frame)
+        used_mode = mode
 
     else:
         raise ValueError(f"Unsupported mode: {mode!r}")
@@ -316,6 +446,9 @@ def process_utterance(
     else:
         print("No element selected after matching.")
 
+    if study is not None:
+        study.set_grounding_path(used_mode if match else None)
+
     if mode in ("both", "all"):
         cascade_ok = match is not None
     else:
@@ -324,6 +457,17 @@ def process_utterance(
 
     if not cascade_ok:
         print("No confident UI match")
+        _log_study(
+            study,
+            outcome="no_match",
+            action=action,
+            query=query,
+            mode_used=used_mode,
+            ok=False,
+            reason="below_threshold_or_no_candidate",
+            element=match,
+            match_score=float(score) if score is not None else None,
+        )
         return "continue"
 
     frame_for_dataset = frame.copy() if frame is not None else None
@@ -335,6 +479,7 @@ def process_utterance(
         match=match,
         score=score,
         frame=frame_for_dataset,
+        event_id=study.event_id if study is not None else None,
     )
     if artifacts:
         command["_dataset_event_id"] = artifacts.get("event_id")
@@ -379,6 +524,18 @@ def process_utterance(
         return "exit"
     if g == "stop":
         print("Cancelled before execute.")
+        _log_study(
+            study,
+            outcome="cancelled_grace",
+            action=action,
+            query=query,
+            mode_used=used_mode,
+            ok=False,
+            reason="grace_stop",
+            element=match,
+            artifacts=artifacts,
+            match_score=float(score) if score is not None else None,
+        )
         return "continue"
 
     if not _confirm(
@@ -387,6 +544,18 @@ def process_utterance(
         f"{action} on “{match.get('name', '?')}”?",
     ):
         print("Cancelled.")
+        _log_study(
+            study,
+            outcome="cancelled_confirm",
+            action=action,
+            query=query,
+            mode_used=used_mode,
+            ok=False,
+            reason="confirm_cancel",
+            element=match,
+            artifacts=artifacts,
+            match_score=float(score) if score is not None else None,
+        )
         return "continue"
 
     debug_frame = frame.copy() if frame is not None else None
@@ -402,11 +571,24 @@ def process_utterance(
 
     if ui is not None:
         ui.set_pipeline_guide("Executing…")
-    result = execute(action, element=match, params=command)
+    if study:
+        study.attach_to_command(command)
+    with study.time_block("execute") if study else nullcontext():
+        result = execute(action, element=match, params=command)
     if not result.ok:
         print(result.reason)
     elif action in POST_GROUNDING_CLICK_DELAY_ACTIONS:
         time.sleep(1.5)
+
+    if study is not None and result.ok:
+        from dataset.study_context import get_participant_id
+
+        prompt_study_rating(
+            study.event_id,
+            participant_id=get_participant_id(),
+            utterance_index=None,
+            ui_root=getattr(ui, "root", None) if ui is not None else None,
+        )
 
     print(f"Execution time: {time.time() - start_time:.4f} sec")
     return "continue"
