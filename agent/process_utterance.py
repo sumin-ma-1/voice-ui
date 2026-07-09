@@ -19,6 +19,7 @@ from com.office_controller import OfficeController
 from dataset.data_logger import (
     append_hard_negative_rows,
     extra_negatives_cap,
+    flush_study_execute_log,
     log_study_utterance,
     prepare_grounding_artifacts,
 )
@@ -135,6 +136,7 @@ def _log_study(
     match_score: float | None = None,
     ui: Any | None = None,
     prompt_rating: bool = False,
+    raw_text: str | None = None,
 ) -> None:
     if recorder is None:
         return
@@ -158,6 +160,7 @@ def _log_study(
             participant_id=get_participant_id(),
             utterance_index=None,
             ui_root=getattr(ui, "root", None) if ui is not None else None,
+            raw_text=raw_text,
         )
 
 
@@ -201,7 +204,8 @@ def process_utterance(
         if stripped:
             parse_source = stripped
 
-    command = parse_command(parse_source)
+    with study.time_block("parse") if study else nullcontext():
+        command = parse_command(parse_source)
     command["_raw_text"] = (text or "").strip()
     command["_mode_used"] = mode
 
@@ -233,7 +237,8 @@ def process_utterance(
         print("Office COM command detected")
         if ui is not None:
             ui.set_pipeline_guide("Running Office action…")
-        g = _grace_wait(voice, ui, grace_sec)
+        with study.time_block("grace") if study else nullcontext():
+            g = _grace_wait(voice, ui, grace_sec)
         if g == "exit":
             return "exit"
         if g == "stop":
@@ -248,7 +253,9 @@ def process_utterance(
                 reason="grace_stop",
             )
             return "continue"
-        if not _confirm(ui, "Confirm Office action", f"Run Office command?\n{command}"):
+        with study.time_block("confirm") if study else nullcontext():
+            confirmed = _confirm(ui, "Confirm Office action", f"Run Office command?\n{command}")
+        if not confirmed:
             print("Cancelled.")
             _log_study(
                 study,
@@ -275,6 +282,7 @@ def process_utterance(
             reason=None if success else "office_execute_failed",
             ui=ui,
             prompt_rating=bool(success),
+            raw_text=text,
         )
         return "continue"
 
@@ -282,7 +290,8 @@ def process_utterance(
         print("Direct action:", action)
         if ui is not None:
             ui.set_pipeline_guide(f"Direct action: {action}")
-        g = _grace_wait(voice, ui, grace_sec)
+        with study.time_block("grace") if study else nullcontext():
+            g = _grace_wait(voice, ui, grace_sec)
         if g == "exit":
             return "exit"
         if g == "stop":
@@ -297,7 +306,9 @@ def process_utterance(
                 reason="grace_stop",
             )
             return "continue"
-        if not _confirm(ui, "Confirm action", f"Run {action}?"):
+        with study.time_block("confirm") if study else nullcontext():
+            confirmed = _confirm(ui, "Confirm action", f"Run {action}?")
+        if not confirmed:
             print("Cancelled.")
             _log_study(
                 study,
@@ -311,13 +322,18 @@ def process_utterance(
             return "continue"
         if study:
             study.attach_to_command(command)
-        result = execute(action, element=None, params=command)
+        with study.time_block("execute") if study else nullcontext():
+            result = execute(action, element=None, params=command)
+        if study and study.has_pending_execute():
+            flush_study_execute_log(
+                study,
+                query=command.get("query"),
+                mode_used=mode,
+            )
         if not result.ok:
             print(result.reason)
         print(f"Execution time: {time.time() - start_time:.4f} sec")
-        if study is None:
-            pass
-        elif result.ok:
+        if study is not None and result.ok:
             from dataset.study_context import get_participant_id
 
             prompt_study_rating(
@@ -325,6 +341,7 @@ def process_utterance(
                 participant_id=get_participant_id(),
                 utterance_index=None,
                 ui_root=getattr(ui, "root", None) if ui is not None else None,
+                raw_text=text,
             )
         return "continue"
 
@@ -471,16 +488,17 @@ def process_utterance(
         return "continue"
 
     frame_for_dataset = frame.copy() if frame is not None else None
-    artifacts = prepare_grounding_artifacts(
-        raw_text=text,
-        action=action,
-        query=query,
-        mode_used=used_mode,
-        match=match,
-        score=score,
-        frame=frame_for_dataset,
-        event_id=study.event_id if study is not None else None,
-    )
+    with study.time_block("artifacts") if study else nullcontext():
+        artifacts = prepare_grounding_artifacts(
+            raw_text=text,
+            action=action,
+            query=query,
+            mode_used=used_mode,
+            match=match,
+            score=score,
+            frame=frame_for_dataset,
+            event_id=study.event_id if study is not None else None,
+        )
     if artifacts:
         command["_dataset_event_id"] = artifacts.get("event_id")
         command["_dataset_frame_id"] = artifacts.get("frame_id")
@@ -517,9 +535,11 @@ def process_utterance(
     master = ui.root if ui is not None else None
     if master is not None:
         hl_ms = max(1200, int(grace_sec * 1000) + 400)
-        show_grounding_highlight(element=match, master=master, duration_ms=hl_ms)
+        with study.time_block("highlight") if study else nullcontext():
+            show_grounding_highlight(element=match, master=master, duration_ms=hl_ms)
 
-    g = _grace_wait(voice, ui, grace_sec)
+    with study.time_block("grace") if study else nullcontext():
+        g = _grace_wait(voice, ui, grace_sec)
     if g == "exit":
         return "exit"
     if g == "stop":
@@ -538,11 +558,13 @@ def process_utterance(
         )
         return "continue"
 
-    if not _confirm(
-        ui,
-        "Confirm UI action",
-        f"{action} on “{match.get('name', '?')}”?",
-    ):
+    with study.time_block("confirm") if study else nullcontext():
+        confirmed = _confirm(
+            ui,
+            "Confirm UI action",
+            f"{action} on “{match.get('name', '?')}”?",
+        )
+    if not confirmed:
         print("Cancelled.")
         _log_study(
             study,
@@ -559,15 +581,16 @@ def process_utterance(
         return "continue"
 
     debug_frame = frame.copy() if frame is not None else None
-    if debug_frame is not None:
-        if mode == "ocr":
-            debug_frame = draw_elements(debug_frame, filtered)
-        elif mode in ("uia", "vision"):
-            debug_frame = draw_elements(debug_frame, filtered)
-        debug_frame = draw_match(debug_frame, match)
+    with study.time_block("debug") if study else nullcontext():
+        if debug_frame is not None:
+            if mode == "ocr":
+                debug_frame = draw_elements(debug_frame, filtered)
+            elif mode in ("uia", "vision"):
+                debug_frame = draw_elements(debug_frame, filtered)
+            debug_frame = draw_match(debug_frame, match)
 
-    if debug_frame is not None:
-        show_debug(debug_frame)
+        if debug_frame is not None:
+            show_debug(debug_frame)
 
     if ui is not None:
         ui.set_pipeline_guide("Executing…")
@@ -575,6 +598,12 @@ def process_utterance(
         study.attach_to_command(command)
     with study.time_block("execute") if study else nullcontext():
         result = execute(action, element=match, params=command)
+    if study and study.has_pending_execute():
+        flush_study_execute_log(
+            study,
+            query=query,
+            mode_used=used_mode,
+        )
     if not result.ok:
         print(result.reason)
     elif action in POST_GROUNDING_CLICK_DELAY_ACTIONS:
@@ -588,6 +617,7 @@ def process_utterance(
             participant_id=get_participant_id(),
             utterance_index=None,
             ui_root=getattr(ui, "root", None) if ui is not None else None,
+            raw_text=text,
         )
 
     print(f"Execution time: {time.time() - start_time:.4f} sec")

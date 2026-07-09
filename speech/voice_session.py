@@ -303,7 +303,14 @@ class VoiceSession:
                         if len(pcm) < SAMPLE_RATE * 0.12:
                             continue
 
+                        t_stt = time.perf_counter()
                         text = self._transcribe(pcm)
+                        try:
+                            from dataset.study_context import set_last_voice_stt_ms
+
+                            set_last_voice_stt_ms((time.perf_counter() - t_stt) * 1000.0)
+                        except Exception:
+                            pass
                         if self._on_partial:
                             try:
                                 self._on_partial("")

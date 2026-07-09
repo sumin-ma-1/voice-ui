@@ -52,6 +52,12 @@ _SHOPPING_HINTS = (
 )
 _YOUTUBE_HINTS = ("youtube", "youtu.be")
 
+_PIPELINE_KEYS = ("stt", "parse", "capture", "uia", "ocr", "vision", "match", "execute")
+_UX_KEYS = ("grace", "highlight", "confirm", "debug", "artifacts")
+
+# Set by speech.voice_session after final Whisper pass (voice input only).
+_LAST_VOICE_STT_MS: float | None = None
+
 
 def is_study_mode() -> bool:
     if _truthy(os.getenv("VOICE_UI_STUDY")):
@@ -169,17 +175,36 @@ def target_meta_flags(element: dict[str, Any] | None) -> dict[str, bool]:
     }
 
 
+def set_last_voice_stt_ms(ms: float | None) -> None:
+    global _LAST_VOICE_STT_MS
+    _LAST_VOICE_STT_MS = ms
+
+
+def consume_last_voice_stt_ms() -> float | None:
+    global _LAST_VOICE_STT_MS
+    ms = _LAST_VOICE_STT_MS
+    _LAST_VOICE_STT_MS = None
+    return ms
+
+
 def _system_specs() -> dict[str, Any]:
     specs: dict[str, Any] = {
         "platform": platform.platform(),
         "processor": platform.processor() or platform.machine(),
         "python": platform.python_version(),
+        "machine": platform.machine(),
     }
     try:
         import psutil  # optional
 
-        specs["ram_gb"] = round(psutil.virtual_memory().total / (1024**3), 1)
-        specs["cpu_count"] = psutil.cpu_count(logical=True)
+        vm = psutil.virtual_memory()
+        specs["ram_gb"] = round(vm.total / (1024**3), 1)
+        specs["ram_available_gb"] = round(vm.available / (1024**3), 1)
+        specs["cpu_count_logical"] = psutil.cpu_count(logical=True)
+        specs["cpu_count_physical"] = psutil.cpu_count(logical=False)
+        specs["disk_free_gb"] = round(
+            psutil.disk_usage(str(Path.cwd().anchor or "C:\\")).free / (1024**3), 1
+        )
     except Exception:
         pass
 
@@ -189,6 +214,9 @@ def _system_specs() -> dict[str, Any]:
         specs["cuda_available"] = bool(torch.cuda.is_available())
         if torch.cuda.is_available():
             specs["gpu_name"] = torch.cuda.get_device_name(0)
+            specs["gpu_vram_gb"] = round(
+                torch.cuda.get_device_properties(0).total_memory / (1024**3), 1
+            )
     except Exception:
         specs["cuda_available"] = False
 
@@ -200,6 +228,32 @@ def _system_specs() -> dict[str, Any]:
     return specs
 
 
+def study_hardware_notes(specs: dict[str, Any]) -> dict[str, Any]:
+    """Reboot / environment recommendations from one-time manifest specs."""
+    ram = float(specs.get("ram_gb") or 0)
+    disk = float(specs.get("disk_free_gb") or 0)
+    reboot_recommended = ram < 16 or disk < 10
+    return {
+        "min_ram_gb_recommended": 16,
+        "min_disk_free_gb_recommended": 10,
+        "gpu_optional_for_vision": True,
+        "reboot_before_session_recommended": reboot_recommended,
+        "reboot_reason": (
+            "RAM<16GB or disk<10GB free at session start"
+            if reboot_recommended
+            else None
+        ),
+        "close_heavy_apps_recommended": True,
+    }
+
+
+def _task_list_manifest() -> dict[str, Any]:
+    from dataset.study_tasks import load_task_list
+
+    tasks = load_task_list()
+    return {"file": "task131.xlsx", "count": len(tasks)}
+
+
 def ensure_study_manifest(*, mode: str, input_kind: str) -> None:
     global _MANIFEST_WRITTEN
     if not is_study_mode() or _MANIFEST_WRITTEN:
@@ -209,12 +263,25 @@ def ensure_study_manifest(*, mode: str, input_kind: str) -> None:
         _MANIFEST_WRITTEN = True
         return
 
+    system = _system_specs()
+    session_type = (os.getenv("VOICE_UI_STUDY_SESSION_TYPE") or "user_study").strip()
     manifest = {
         "participant_id": get_participant_id(),
         "session_id": datetime_session_id(),
+        "session_type": session_type,
         "mode": mode,
         "input_mode": input_kind,
-        "system": _system_specs(),
+        "system": system,
+        "hardware_guidance": study_hardware_notes(system),
+        "latency_metrics": {
+            "primary": "latency_ms.pipeline",
+            "definition": (
+                "pipeline = parse + screen capture + grounding (uia/ocr/vision/match) "
+                "+ execute (automation). Excludes grace/highlight/confirm UI delays."
+            ),
+            "wall_clock_includes_ux": "latency_ms.wall_clock",
+        },
+        "task_list": _task_list_manifest(),
         "notes": (
             "surface_class: native_app = local Win32/UIA apps; "
             "web_in_browser = pages rendered inside Chrome/Edge (e.g. YouTube, shopping)."
@@ -244,8 +311,13 @@ class StudyRecorder:
     grounding_path: str | None = None
     vision_used: bool = False
     surface: dict[str, Any] = field(default_factory=dict)
+    _pending_execute: dict[str, Any] | None = field(default=None, repr=False)
+    _wall_clock_ms: float | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
+        stt = consume_last_voice_stt_ms()
+        if stt is not None:
+            self.timings_ms["stt"] = round(stt, 2)
         self.surface = infer_surface_context()
 
     def mark_ms(self, key: str, elapsed_ms: float) -> None:
@@ -262,6 +334,47 @@ class StudyRecorder:
     def total_ms(self) -> float:
         return round((time.perf_counter() - self.t0) * 1000.0, 2)
 
+    def freeze_wall_clock(self) -> None:
+        """Call immediately before logging (avoids heavy imports inflating wall_clock)."""
+        self._wall_clock_ms = self.total_ms()
+
+    def wall_clock_ms(self) -> float:
+        return self._wall_clock_ms if self._wall_clock_ms is not None else self.total_ms()
+
+    def pipeline_ms(self) -> float:
+        return round(
+            sum(self.timings_ms.get(k, 0.0) for k in _PIPELINE_KEYS),
+            2,
+        )
+
+    def ux_overhead_ms(self) -> float:
+        return round(sum(self.timings_ms.get(k, 0.0) for k in _UX_KEYS), 2)
+
+    def refresh_surface(self) -> None:
+        self.surface = infer_surface_context()
+
+    def set_pending_execute(
+        self,
+        *,
+        action: str,
+        ok: bool,
+        reason: str | None,
+        element: dict[str, Any] | None,
+        artifacts: dict[str, Any] | None,
+        match_score: float | None,
+    ) -> None:
+        self._pending_execute = {
+            "action": action,
+            "ok": ok,
+            "reason": reason,
+            "element": element,
+            "artifacts": artifacts or {},
+            "match_score": match_score,
+        }
+
+    def has_pending_execute(self) -> bool:
+        return self._pending_execute is not None
+
     def build_study_block(
         self,
         *,
@@ -277,18 +390,20 @@ class StudyRecorder:
     ) -> dict[str, Any]:
         gpu_used = False
         gpu_name: str | None = None
-        try:
-            from perception.icon_utils import is_gpu
-
-            gpu_used = bool(is_gpu and self.vision_used)
-            if is_gpu:
+        if self.vision_used:
+            try:
                 import torch
 
-                gpu_name = torch.cuda.get_device_name(0)
-        except Exception:
-            pass
+                gpu_used = bool(torch.cuda.is_available())
+                if gpu_used:
+                    gpu_name = torch.cuda.get_device_name(0)
+            except Exception:
+                pass
 
         flags = target_meta_flags(element)
+        from dataset.study_tasks import match_task
+
+        task = match_task(self.raw_text)
         return {
             "participant_id": get_participant_id(),
             "utterance_index": next_utterance_index(),
@@ -306,8 +421,11 @@ class StudyRecorder:
             "gpu_used": gpu_used,
             "gpu_name": gpu_name,
             "match_score": match_score,
+            "task": task,
             "latency_ms": {
-                "total": self.total_ms(),
+                "pipeline": self.pipeline_ms(),
+                "wall_clock": self.wall_clock_ms(),
+                "ux_overhead": self.ux_overhead_ms(),
                 **self.timings_ms,
             },
             "surface": self.surface,

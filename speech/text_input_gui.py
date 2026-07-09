@@ -1,5 +1,7 @@
 import ctypes
+import os
 import tkinter as tk
+from pathlib import Path
 
 import customtkinter as ctk
 
@@ -23,7 +25,7 @@ class TextInputGUI:
         self.root.configure(fg_color="#1e1e1e")
 
         sw = self.root.winfo_screenwidth()
-        self.root.geometry(f"520x52+{sw // 2 - 260}+16")
+        self.root.geometry(f"560x72+{sw // 2 - 280}+16")
 
         border = ctk.CTkFrame(self.root, fg_color="#303030", corner_radius=10)
         border.pack(fill="both", expand=True)
@@ -31,8 +33,11 @@ class TextInputGUI:
         inner = ctk.CTkFrame(border, fg_color="#1e1e1e", corner_radius=8)
         inner.pack(fill="both", expand=True, padx=2, pady=2)
 
+        input_row = ctk.CTkFrame(inner, fg_color="#1e1e1e")
+        input_row.pack(fill="x", expand=True)
+
         ctk.CTkLabel(
-            inner,
+            input_row,
             text="⟩",
             font=ctk.CTkFont("Segoe UI", 18, weight="bold"),
             text_color="#3a7ebf",
@@ -40,7 +45,7 @@ class TextInputGUI:
         ).pack(side="left", padx=(10, 0))
 
         self.entry = ctk.CTkEntry(
-            inner,
+            input_row,
             fg_color="#1e1e1e",
             text_color="#ffffff",
             border_width=0,
@@ -50,11 +55,38 @@ class TextInputGUI:
         )
         self.entry.pack(side="left", fill="x", expand=True, padx=(4, 10))
 
+        self.status = ctk.CTkLabel(
+            inner,
+            text="",
+            font=ctk.CTkFont("Segoe UI", 10),
+            text_color="#707070",
+            anchor="w",
+        )
+        self.status.pack(fill="x", padx=(12, 10), pady=(0, 4))
+
         self.entry.bind("<Return>", self._on_enter)
         self.entry.bind("<Escape>", self._on_escape)
 
         # First layout pass while still mapped (before withdraw) so the first deiconify paints on Windows.
         self.root.update_idletasks()
+
+    def _study_status_text(self) -> str:
+        if os.getenv("VOICE_UI_STUDY", "").strip().lower() not in {"1", "true", "yes", "on"}:
+            return ""
+        pid = (os.getenv("VOICE_UI_STUDY_USER") or "?").strip()
+        ds = Path(os.getenv("VOICE_UI_DATASET_DIR", "dataset"))
+        n = 0
+        ev = ds / "events.jsonl"
+        if ev.is_file():
+            n = sum(1 for line in ev.read_text(encoding="utf-8").splitlines() if line.strip())
+        ratings = ""
+        if os.getenv("VOICE_UI_STUDY_RATINGS", "").strip().lower() in {"1", "true", "yes", "on"}:
+            ratings = " | ratings on"
+        return f"study {pid} | logged {n}{ratings}"
+
+    def _refresh_status(self) -> None:
+        text = self._study_status_text()
+        self.status.configure(text=text)
 
     def _on_enter(self, event):
         text = self.entry.get().strip().lower()
@@ -78,6 +110,7 @@ class TextInputGUI:
 
     def get_input(self, delay_ms=300):
         self.result = None
+        self._refresh_status()
         self.root.deiconify()
         self.root.lift()
         try:

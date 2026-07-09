@@ -7,6 +7,7 @@ Keeps logging, thresholds, and frame refresh behavior identical to the former in
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import numpy as np
@@ -25,7 +26,18 @@ from perception.ui_fallback_pipeline import (
 )
 
 
+def _quiet_grounding() -> bool:
+    return (os.getenv("VOICE_UI_STUDY_QUIET") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _print_uia_listing(uia_filtered: list[dict]) -> None:
+    if _quiet_grounding():
+        return
     for i, el in enumerate(uia_filtered):
         print(
             f"  [{i + 1}] Name: {el['name']}, Type: {el['type']} | "

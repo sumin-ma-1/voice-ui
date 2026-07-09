@@ -299,6 +299,7 @@ def log_study_utterance(
 
     from dataset.study_context import route_for_action
 
+    recorder.freeze_wall_clock()
     bbox = _bbox_to_int_tuple((element or {}).get("bbox"))
     art = artifacts or {}
     study = recorder.build_study_block(
@@ -347,6 +348,34 @@ def log_study_utterance(
     return recorder.event_id
 
 
+def flush_study_execute_log(
+    recorder: Any,
+    *,
+    query: str | None,
+    mode_used: str | None,
+) -> str:
+    """Write deferred execute-row after timing blocks have closed."""
+    pending = recorder._pending_execute
+    if pending is None:
+        return recorder.event_id
+    recorder.refresh_surface()
+    outcome = "success" if pending["ok"] else "exec_fail"
+    event_id = log_study_utterance(
+        recorder=recorder,
+        outcome=outcome,
+        action=pending["action"],
+        query=query,
+        mode_used=mode_used,
+        ok=bool(pending["ok"]),
+        reason=pending["reason"],
+        element=pending["element"],
+        artifacts=pending["artifacts"],
+        match_score=pending["match_score"],
+    )
+    recorder._pending_execute = None
+    return event_id
+
+
 def log_execute_event(
     *,
     action: str,
@@ -360,13 +389,8 @@ def log_execute_event(
 
     recorder = params.get("_study_recorder")
     if recorder is not None:
-        outcome = "success" if ok else "exec_fail"
-        log_study_utterance(
-            recorder=recorder,
-            outcome=outcome,
+        recorder.set_pending_execute(
             action=action,
-            query=params.get("query"),
-            mode_used=params.get("_mode_used"),
             ok=bool(ok),
             reason=reason,
             element=element,
