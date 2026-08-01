@@ -1,6 +1,6 @@
 # Voice UI, typed or spoken command → parse → Office, direct keys, or grounded UI action
 
-Windows desktop loop: **text bar** (development default) or **hands‑free voice + floating UI** → structured command → Microsoft Office (COM), PyAutoGUI shortcuts, or **screen capture + element matching** (UIA, OCR, and/or vision).
+Windows desktop loop: **hands‑free voice + floating UI** → structured command → Microsoft Office (COM), PyAutoGUI shortcuts, or **screen capture + element matching** (UIA, OCR, and/or vision).
 
 All runnable paths go through **`agent/process_utterance.py`** so behavior stays aligned. Optional **dataset logging** (`VOICE_UI_DATASET_LOG`) records executions and grounded crops to disk without changing default runtime behavior.
 
